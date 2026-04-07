@@ -19,11 +19,7 @@ export default async function HomePage() {
       take: 3,
       include: {
         team: { select: { name: true } },
-        games: {
-          orderBy: { createdAt: "desc" },
-          take: 1,
-          include: { _count: { select: { points: true } } },
-        },
+        _count: { select: { games: true } },
       },
     }),
   ]);
@@ -67,31 +63,26 @@ export default async function HomePage() {
             </Link>
           </div>
           <div className="space-y-2">
-            {recentTournaments.map((t: (typeof recentTournaments)[number]) => {
-              const lastGame = t.games[0];
-              return (
-                <Link key={t.id} href={`/tournaments/${t.id}`}>
-                  <Card className="hover:bg-accent transition-colors">
-                    <CardContent className="flex items-center justify-between py-3 px-4">
-                      <div>
-                        <p className="font-medium">{t.name}</p>
-                        <p className="text-xs text-muted-foreground">
-                          {t.team.name} · {new Date(t.date).toLocaleDateString()}
-                        </p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {lastGame && (
-                          <Badge variant="secondary" className="text-xs">
-                            {lastGame._count.points}pts
-                          </Badge>
-                        )}
-                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                      </div>
-                    </CardContent>
-                  </Card>
-                </Link>
-              );
-            })}
+            {recentTournaments.map((t: (typeof recentTournaments)[number]) => (
+              <Link key={t.id} href={`/tournaments/${t.id}`}>
+                <Card className="hover:bg-accent transition-colors">
+                  <CardContent className="flex items-center justify-between py-3 px-4">
+                    <div>
+                      <p className="font-medium">{t.name}</p>
+                      <p className="text-xs text-muted-foreground">
+                        {t.team.name} · {new Date(t.date).toLocaleDateString()}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Badge variant="secondary" className="text-xs">
+                        {t._count.games}g
+                      </Badge>
+                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                    </div>
+                  </CardContent>
+                </Card>
+              </Link>
+            ))}
           </div>
         </section>
       )}
