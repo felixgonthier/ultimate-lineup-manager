@@ -119,8 +119,8 @@ export default async function GamePage({
             {game.points.map((point: (typeof game.points)[number], i: number) => {
               // Compute running score up to and including this point
               const pointsSoFar = game.points.slice(0, i + 1);
-              const us = pointsSoFar.filter((p) => p.scoredByUs === true).length;
-              const them = pointsSoFar.filter((p) => p.scoredByUs === false).length;
+              const us = pointsSoFar.filter((p: (typeof game.points)[number]) => p.scoredByUs === true).length;
+              const them = pointsSoFar.filter((p: (typeof game.points)[number]) => p.scoredByUs === false).length;
               const scored = point.scoredByUs === true;
               const lost = point.scoredByUs === false;
 
@@ -156,7 +156,7 @@ export default async function GamePage({
                       )}
                     </div>
                     <p className="text-xs text-muted-foreground mt-1">
-                      {point.players.map((pp) => pp.player.name).join(" · ")}
+                      {point.players.map((pp: (typeof point.players)[number]) => pp.player.name).join(" · ")}
                     </p>
                   </div>
 
