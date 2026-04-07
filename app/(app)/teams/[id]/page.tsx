@@ -9,7 +9,7 @@ import { DeleteTeamButton } from "./delete-button";
 
 export const dynamic = "force-dynamic";
 
-const ROLE_LABELS = { HANDLER: "Handler", CUTTER: "Cutter", HYBRID: "Hybrid" };
+const ROLE_LABELS: Record<string, string> = { HANDLER: "Handler", CUTTER: "Cutter", HYBRID: "Hybrid" };
 const ROLE_COLORS: Record<string, string> = {
   HANDLER: "bg-blue-100 text-blue-800",
   CUTTER: "bg-green-100 text-green-800",
