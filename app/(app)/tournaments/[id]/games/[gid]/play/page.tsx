@@ -25,23 +25,38 @@ export default async function PlayPage({
   const hotPlayerIds: string[] = [];
   type GamePoint = (typeof game.points)[number];
   type PointPlayer = (typeof game.points)[number]["players"][number];
-  const allPlayerIds = new Set(game.points.flatMap((pt: GamePoint) => pt.players.map((pp: PointPlayer) => pp.playerId as string)));
+  const allPlayerIds: string[] = Array.from(
+    new Set(
+      game.points.flatMap((pt: GamePoint) =>
+        pt.players.map((pp: PointPlayer) => pp.playerId as string),
+      ),
+    ),
+  );
   for (const playerId of allPlayerIds) {
-    const playerPoints = game.points.filter((pt: GamePoint) => pt.players.some((pp: PointPlayer) => pp.playerId === playerId));
+    const playerPoints = game.points.filter((pt: GamePoint) =>
+      pt.players.some((pp: PointPlayer) => pp.playerId === playerId),
+    );
     const last4 = playerPoints.slice(-4);
     const contributions = last4.filter(
-      (pt: GamePoint) => pt.goalPlayerId === playerId || pt.assistPlayerId === playerId
+      (pt: GamePoint) =>
+        pt.goalPlayerId === playerId || pt.assistPlayerId === playerId,
     ).length;
     if (contributions >= 2) hotPlayerIds.push(playerId);
   }
 
   // Consecutive points played from the end (streak)
-  const sortedPoints = [...game.points].sort((a: GamePoint, b: GamePoint) => a.pointNumber - b.pointNumber);
+  const sortedPoints = [...game.points].sort(
+    (a: GamePoint, b: GamePoint) => a.pointNumber - b.pointNumber,
+  );
   const consecutiveCounts: Record<string, number> = {};
   for (const playerId of allPlayerIds) {
     let streak = 0;
     for (let i = sortedPoints.length - 1; i >= 0; i--) {
-      if (sortedPoints[i].players.some((pp: PointPlayer) => pp.playerId === playerId)) {
+      if (
+        sortedPoints[i].players.some(
+          (pp: PointPlayer) => pp.playerId === playerId,
+        )
+      ) {
         streak++;
       } else {
         break;
@@ -57,7 +72,12 @@ export default async function PlayPage({
     role: p.role as string,
     pointCount: pointCounts[p.id] ?? 0,
     lineIds: lines
-      .filter((l: (typeof lines)[number]) => l.players.some((lp: (typeof lines)[number]["players"][number]) => lp.player.id === p.id))
+      .filter((l: (typeof lines)[number]) =>
+        l.players.some(
+          (lp: (typeof lines)[number]["players"][number]) =>
+            lp.player.id === p.id,
+        ),
+      )
       .map((l: (typeof lines)[number]) => l.id),
   }));
 
@@ -73,7 +93,11 @@ export default async function PlayPage({
         scoreThem: game.scoreThem,
       }}
       players={players}
-      lines={lines.map((l: (typeof lines)[number]) => ({ id: l.id, name: l.name, type: l.type as "NORMAL" | "POWER" }))}
+      lines={lines.map((l: (typeof lines)[number]) => ({
+        id: l.id,
+        name: l.name,
+        type: l.type as "NORMAL" | "POWER",
+      }))}
       nextPointNumber={nextPointNumber}
       hotPlayerIds={hotPlayerIds}
       consecutiveCounts={consecutiveCounts}
