@@ -61,7 +61,7 @@ export default async function TournamentPage({
             <p className="text-sm text-muted-foreground">No lines set up yet</p>
           ) : (
             <div className="flex flex-wrap gap-2">
-              {tournament.lines.map((line) => (
+              {tournament.lines.map((line: (typeof tournament.lines)[number]) => (
                 <Badge key={line.id} variant="secondary">
                   {line.name} ({line.players.length})
                 </Badge>
@@ -87,7 +87,7 @@ export default async function TournamentPage({
               <span className="w-8 text-center">A</span>
               <span className="w-8 text-center">Pts</span>
             </div>
-            {playerStats.map((s, i) => (
+            {playerStats.map((s: (typeof playerStats)[number], i) => (
               <div
                 key={s.id}
                 className={`grid grid-cols-[1fr_auto_auto_auto] items-center px-4 py-2 text-sm ${i < playerStats.length - 1 ? "border-b" : ""}`}
@@ -127,7 +127,7 @@ export default async function TournamentPage({
           </Card>
         ) : (
           <div className="space-y-2">
-            {tournament.games.map((game) => (
+            {tournament.games.map((game: (typeof tournament.games)[number]) => (
               <Card key={game.id} className="overflow-hidden">
                 <CardContent className="p-0">
                   <div className="flex items-center">

@@ -108,7 +108,7 @@ export default async function HomePage() {
             </Link>
           </div>
           <div className="space-y-2">
-            {teams.map((team) => (
+            {teams.map((team: (typeof teams)[number]) => (
               <Link key={team.id} href={`/teams/${team.id}`}>
                 <Card className="hover:bg-accent transition-colors">
                   <CardContent className="flex items-center justify-between py-3 px-4">

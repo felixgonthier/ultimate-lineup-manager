@@ -37,7 +37,7 @@ export default async function TournamentsPage() {
         </Card>
       ) : (
         <div className="space-y-2">
-          {tournaments.map((t) => (
+          {tournaments.map((t: (typeof tournaments)[number]) => (
             <Link key={t.id} href={`/tournaments/${t.id}`}>
               <Card className="hover:bg-accent transition-colors">
                 <CardContent className="flex items-center justify-between py-3 px-4">
