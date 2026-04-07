@@ -56,7 +56,7 @@ export default async function TeamPage({ params }: { params: Promise<{ id: strin
         </Card>
       ) : (
         <Card className="p-0 gap-0">
-          {team.players.map((player: (typeof team.players)[number], i) => (
+          {team.players.map((player: (typeof team.players)[number], i: number) => (
             <Link key={player.id} href={`/teams/${team.id}/players/${player.id}/edit`}>
               <div className={`flex items-center justify-between px-4 py-3 hover:bg-accent transition-colors${i > 0 ? " border-t" : ""}`}>
                 <div className="flex items-center gap-3">

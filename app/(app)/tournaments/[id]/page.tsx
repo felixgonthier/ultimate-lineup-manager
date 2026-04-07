@@ -87,7 +87,7 @@ export default async function TournamentPage({
               <span className="w-8 text-center">A</span>
               <span className="w-8 text-center">Pts</span>
             </div>
-            {playerStats.map((s: (typeof playerStats)[number], i) => (
+            {playerStats.map((s: (typeof playerStats)[number], i: number) => (
               <div
                 key={s.id}
                 className={`grid grid-cols-[1fr_auto_auto_auto] items-center px-4 py-2 text-sm ${i < playerStats.length - 1 ? "border-b" : ""}`}

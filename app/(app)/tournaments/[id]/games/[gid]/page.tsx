@@ -116,7 +116,7 @@ export default async function GamePage({
             <CardTitle className="text-base">Points ({game.points.length})</CardTitle>
           </CardHeader>
           <CardContent className="p-0">
-            {game.points.map((point, i) => {
+            {game.points.map((point: (typeof game.points)[number], i: number) => {
               // Compute running score up to and including this point
               const pointsSoFar = game.points.slice(0, i + 1);
               const us = pointsSoFar.filter((p) => p.scoredByUs === true).length;
