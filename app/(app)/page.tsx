@@ -67,7 +67,7 @@ export default async function HomePage() {
             </Link>
           </div>
           <div className="space-y-2">
-            {recentTournaments.map((t) => {
+            {recentTournaments.map((t: (typeof recentTournaments)[number]) => {
               const lastGame = t.games[0];
               return (
                 <Link key={t.id} href={`/tournaments/${t.id}`}>
