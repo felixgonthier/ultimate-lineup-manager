@@ -25,7 +25,7 @@ export default async function PlayPage({
   const hotPlayerIds: string[] = [];
   type GamePoint = (typeof game.points)[number];
   type PointPlayer = (typeof game.points)[number]["players"][number];
-  const allPlayerIds = new Set(game.points.flatMap((pt: GamePoint) => pt.players.map((pp: PointPlayer) => pp.playerId)));
+  const allPlayerIds = new Set(game.points.flatMap((pt: GamePoint) => pt.players.map((pp: PointPlayer) => pp.playerId as string)));
   for (const playerId of allPlayerIds) {
     const playerPoints = game.points.filter((pt: GamePoint) => pt.players.some((pp: PointPlayer) => pp.playerId === playerId));
     const last4 = playerPoints.slice(-4);
