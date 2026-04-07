@@ -1,0 +1,107 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum PlayerRole {
+  HANDLER
+  CUTTER
+  HYBRID
+}
+
+enum LineType {
+  NORMAL
+  POWER
+}
+
+model Team {
+  id          String       @id @default(cuid())
+  name        String
+  createdAt   DateTime     @default(now())
+  players     Player[]
+  tournaments Tournament[]
+}
+
+model Player {
+  id           String        @id @default(cuid())
+  teamId       String
+  name         String
+  number       Int?
+  role         PlayerRole    @default(CUTTER)
+  active       Boolean       @default(true)
+  createdAt    DateTime      @default(now())
+  team         Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  lineAssigns  LinePlayer[]
+  pointPlayers PointPlayer[]
+  assistPoints Point[]       @relation("AssistPlayer")
+  goalPoints   Point[]       @relation("GoalPlayer")
+}
+
+model Tournament {
+  id        String   @id @default(cuid())
+  teamId    String
+  name      String
+  location  String?
+  date      DateTime
+  createdAt DateTime @default(now())
+  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  lines     Line[]
+  games     Game[]
+}
+
+model Line {
+  id           String       @id @default(cuid())
+  tournamentId String
+  name         String
+  type         LineType     @default(NORMAL)
+  createdAt    DateTime     @default(now())
+  tournament   Tournament   @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  players      LinePlayer[]
+}
+
+model LinePlayer {
+  lineId   String
+  playerId String
+  line     Line   @relation(fields: [lineId], references: [id], onDelete: Cascade)
+  player   Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@id([lineId, playerId])
+}
+
+model Game {
+  id           String     @id @default(cuid())
+  tournamentId String
+  opponentName String
+  scoreUs      Int        @default(0)
+  scoreThem    Int        @default(0)
+  createdAt    DateTime   @default(now())
+  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  points       Point[]
+}
+
+model Point {
+  id             String        @id @default(cuid())
+  gameId         String
+  pointNumber    Int
+  ourOffense     Boolean       @default(true)
+  scoredByUs     Boolean?
+  assistPlayerId String?
+  goalPlayerId   String?
+  createdAt      DateTime      @default(now())
+  game           Game          @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  assistPlayer   Player?       @relation("AssistPlayer", fields: [assistPlayerId], references: [id])
+  goalPlayer     Player?       @relation("GoalPlayer", fields: [goalPlayerId], references: [id])
+  players        PointPlayer[]
+}
+
+model PointPlayer {
+  pointId  String
+  playerId String
+  point    Point  @relation(fields: [pointId], references: [id], onDelete: Cascade)
+  player   Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@id([pointId, playerId])
+}
