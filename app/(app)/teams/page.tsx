@@ -36,20 +36,18 @@ export default async function TeamsPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-2">
+        <div className="rounded-2xl border divide-y overflow-hidden">
           {teams.map((team: (typeof teams)[number]) => (
             <Link key={team.id} href={`/teams/${team.id}`}>
-              <Card className="hover:bg-accent transition-colors">
-                <CardContent className="flex items-center justify-between py-3 px-4">
-                  <p className="font-medium">{team.name}</p>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="outline" className="text-xs">
-                      {team._count.players} players
-                    </Badge>
-                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                  </div>
-                </CardContent>
-              </Card>
+              <div className="flex items-center justify-between px-4 py-3 hover:bg-accent transition-colors">
+                <p className="font-medium">{team.name}</p>
+                <div className="flex items-center gap-2">
+                  <Badge variant="outline" className="text-xs">
+                    {team._count.players} players
+                  </Badge>
+                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                </div>
+              </div>
             </Link>
           ))}
         </div>

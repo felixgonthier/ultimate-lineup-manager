@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { prisma } from "@/lib/db";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Trophy, Users, ChevronRight, Disc } from "lucide-react";
@@ -62,25 +62,23 @@ export default async function HomePage() {
               See all
             </Link>
           </div>
-          <div className="space-y-2">
+          <div className="rounded-2xl border divide-y overflow-hidden">
             {recentTournaments.map((t: (typeof recentTournaments)[number]) => (
               <Link key={t.id} href={`/tournaments/${t.id}`}>
-                <Card className="hover:bg-accent transition-colors">
-                  <CardContent className="flex items-center justify-between py-3 px-4">
-                    <div>
-                      <p className="font-medium">{t.name}</p>
-                      <p className="text-xs text-muted-foreground">
-                        {t.team.name} · {new Date(t.date).toLocaleDateString()}
-                      </p>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <Badge variant="secondary" className="text-xs">
-                        {t._count.games}g
-                      </Badge>
-                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                    </div>
-                  </CardContent>
-                </Card>
+                <div className="flex items-center justify-between px-4 py-3 hover:bg-accent transition-colors">
+                  <div>
+                    <p className="font-medium">{t.name}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {t.team.name} · {new Date(t.date).toLocaleDateString()}
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="secondary" className="text-xs">
+                      {t._count.games}g
+                    </Badge>
+                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                </div>
               </Link>
             ))}
           </div>
@@ -98,20 +96,18 @@ export default async function HomePage() {
               See all
             </Link>
           </div>
-          <div className="space-y-2">
+          <div className="rounded-2xl border divide-y overflow-hidden">
             {teams.map((team: (typeof teams)[number]) => (
               <Link key={team.id} href={`/teams/${team.id}`}>
-                <Card className="hover:bg-accent transition-colors">
-                  <CardContent className="flex items-center justify-between py-3 px-4">
-                    <p className="font-medium">{team.name}</p>
-                    <div className="flex items-center gap-2">
-                      <Badge variant="outline" className="text-xs">
-                        {team._count.players} players
-                      </Badge>
-                      <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                    </div>
-                  </CardContent>
-                </Card>
+                <div className="flex items-center justify-between px-4 py-3 hover:bg-accent transition-colors">
+                  <p className="font-medium">{team.name}</p>
+                  <div className="flex items-center gap-2">
+                    <Badge variant="outline" className="text-xs">
+                      {team._count.players} players
+                    </Badge>
+                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                  </div>
+                </div>
               </Link>
             ))}
           </div>

@@ -36,26 +36,24 @@ export default async function TournamentsPage() {
           </CardContent>
         </Card>
       ) : (
-        <div className="space-y-2">
+        <div className="rounded-2xl border divide-y overflow-hidden">
           {tournaments.map((t: (typeof tournaments)[number]) => (
             <Link key={t.id} href={`/tournaments/${t.id}`}>
-              <Card className="hover:bg-accent transition-colors">
-                <CardContent className="flex items-center justify-between py-3 px-4">
-                  <div>
-                    <p className="font-medium">{t.name}</p>
-                    <p className="text-xs text-muted-foreground">
-                      {t.team.name} · {new Date(t.date).toLocaleDateString()}
-                      {t.location ? ` · ${t.location}` : ""}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Badge variant="secondary" className="text-xs">
-                      {t._count.games}g
-                    </Badge>
-                    <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                  </div>
-                </CardContent>
-              </Card>
+              <div className="flex items-center justify-between px-4 py-3 hover:bg-accent transition-colors">
+                <div>
+                  <p className="font-medium">{t.name}</p>
+                  <p className="text-xs text-muted-foreground">
+                    {t.team.name} · {new Date(t.date).toLocaleDateString()}
+                    {t.location ? ` · ${t.location}` : ""}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <Badge variant="secondary" className="text-xs">
+                    {t._count.games}g
+                  </Badge>
+                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                </div>
+              </div>
             </Link>
           ))}
         </div>
