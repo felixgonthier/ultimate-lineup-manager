@@ -9,6 +9,7 @@ import { login } from "@/lib/auth";
 
 export function LoginForm() {
   const searchParams = useSearchParams();
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
@@ -19,9 +20,9 @@ export function LoginForm() {
     setError("");
 
     const from = searchParams.get("from") || "/";
-    const ok = await login(password, from);
+    const ok = await login(username, password, from);
     if (ok === false) {
-      setError("Wrong password. Try again.");
+      setError("Wrong username or password.");
       setLoading(false);
     }
     // on success, login() calls redirect() server-side — no client code needed
@@ -33,24 +34,41 @@ export function LoginForm() {
         <div className="text-center space-y-1">
           <h1 className="text-2xl font-bold">Lineup Manager</h1>
           <p className="text-muted-foreground text-sm">
-            Enter your password to continue
+            Sign in to manage your team
           </p>
         </div>
         <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="space-y-2">
+            <Label htmlFor="username">Username</Label>
+            <Input
+              id="username"
+              type="text"
+              autoComplete="username"
+              value={username}
+              onChange={(e) => setUsername(e.target.value)}
+              placeholder="Username"
+              autoFocus
+              required
+            />
+          </div>
           <div className="space-y-2">
             <Label htmlFor="password">Password</Label>
             <Input
               id="password"
               type="password"
+              autoComplete="current-password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="Enter password..."
-              autoFocus
+              placeholder="Password"
               required
             />
           </div>
           {error && <p className="text-sm text-destructive">{error}</p>}
-          <Button type="submit" className="w-full" disabled={loading}>
+          <Button
+            type="submit"
+            className="w-full"
+            disabled={loading || !username.trim() || !password}
+          >
             {loading ? "Signing in…" : "Sign in"}
           </Button>
         </form>

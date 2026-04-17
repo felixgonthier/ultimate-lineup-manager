@@ -3,30 +3,36 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import bcrypt from "bcryptjs";
+import { prisma } from "./db";
+import {
+  COOKIE_NAME,
+  MAX_AGE_SECONDS,
+  createSessionToken,
+  getSessionUserId,
+} from "./session";
 
-const COOKIE_NAME = "auth_token";
-const COOKIE_VALUE = "authenticated";
-const MAX_AGE = 60 * 60 * 24 * 30; // 30 days
+export async function login(
+  username: string,
+  password: string,
+  from: string = "/",
+): Promise<boolean> {
+  if (!username || !password) return false;
 
-export async function login(password: string, from: string = "/"): Promise<boolean> {
-  const adminPassword = process.env.ADMIN_PASSWORD;
-  if (!adminPassword) return false;
+  const user = await prisma.user.findUnique({
+    where: { username: username.trim() },
+  });
+  if (!user) return false;
 
-  let valid = false;
-  if (adminPassword.startsWith("$2")) {
-    valid = await bcrypt.compare(password, adminPassword);
-  } else {
-    valid = password === adminPassword;
-  }
-
+  const valid = await bcrypt.compare(password, user.passwordHash);
   if (!valid) return false;
 
+  const token = await createSessionToken(user.id);
   const cookieStore = await cookies();
-  cookieStore.set(COOKIE_NAME, COOKIE_VALUE, {
+  cookieStore.set(COOKIE_NAME, token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
     sameSite: "lax",
-    maxAge: MAX_AGE,
+    maxAge: MAX_AGE_SECONDS,
     path: "/",
   });
 
@@ -36,9 +42,9 @@ export async function login(password: string, from: string = "/"): Promise<boole
 export async function logout() {
   const cookieStore = await cookies();
   cookieStore.delete(COOKIE_NAME);
+  redirect("/login");
 }
 
 export async function isAuthenticated(): Promise<boolean> {
-  const cookieStore = await cookies();
-  return cookieStore.get(COOKIE_NAME)?.value === COOKIE_VALUE;
+  return (await getSessionUserId()) !== null;
 }

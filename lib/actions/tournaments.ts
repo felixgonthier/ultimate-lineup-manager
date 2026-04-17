@@ -2,10 +2,23 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
+import {
+  assertTournamentOwned,
+  requireTeam,
+  requireUser,
+} from "@/lib/session";
+import {
+  computeGroupStatsFromPoints,
+  computePlayerStatsFromPoints,
+  type GroupStats,
+  type PlayerStats,
+} from "@/lib/stats";
 
-export async function getTournaments(teamId?: string) {
+export async function getTournaments() {
+  const user = await requireUser();
+  if (!user.team) return [];
   return prisma.tournament.findMany({
-    where: teamId ? { teamId } : undefined,
+    where: { teamId: user.team.id },
     orderBy: { date: "desc" },
     include: {
       team: { select: { name: true } },
@@ -15,7 +28,9 @@ export async function getTournaments(teamId?: string) {
 }
 
 export async function getTournament(id: string) {
-  return prisma.tournament.findUnique({
+  const user = await requireUser();
+  if (!user.team) return null;
+  const tournament = await prisma.tournament.findUnique({
     where: { id },
     include: {
       team: true,
@@ -37,6 +52,8 @@ export async function getTournament(id: string) {
       },
     },
   });
+  if (!tournament || tournament.teamId !== user.team.id) return null;
+  return tournament;
 }
 
 export async function createTournament(data: {
@@ -45,6 +62,8 @@ export async function createTournament(data: {
   location?: string;
   date: Date;
 }) {
+  const { team } = await requireTeam();
+  if (team.id !== data.teamId) throw new Error("Not authorized");
   const tournament = await prisma.tournament.create({ data });
   revalidatePath("/tournaments");
   return tournament;
@@ -52,64 +71,96 @@ export async function createTournament(data: {
 
 export async function updateTournament(
   id: string,
-  data: { name?: string; location?: string; date?: Date }
+  data: { name?: string; location?: string; date?: Date },
 ) {
-  const tournament = await prisma.tournament.update({ where: { id }, data });
+  const { team } = await requireTeam();
+  await assertTournamentOwned(id, team.id);
+  const tournament = await prisma.tournament.update({
+    where: { id },
+    data,
+  });
   revalidatePath("/tournaments");
   revalidatePath(`/tournaments/${id}`);
   return tournament;
 }
 
 export async function deleteTournament(id: string) {
+  const { team } = await requireTeam();
+  await assertTournamentOwned(id, team.id);
   await prisma.tournament.delete({ where: { id } });
   revalidatePath("/tournaments");
 }
 
-export async function getTournamentPlayerStats(tournamentId: string) {
-  const [goalsData, assistsData, pointsPlayedData] = await Promise.all([
-    prisma.point.groupBy({
-      by: ["goalPlayerId"],
-      where: { game: { tournamentId }, scoredByUs: true, goalPlayerId: { not: null } },
-      _count: { goalPlayerId: true },
-    }),
-    prisma.point.groupBy({
-      by: ["assistPlayerId"],
-      where: { game: { tournamentId }, scoredByUs: true, assistPlayerId: { not: null } },
-      _count: { assistPlayerId: true },
-    }),
-    prisma.pointPlayer.groupBy({
-      by: ["playerId"],
-      where: { point: { game: { tournamentId } } },
-      _count: { playerId: true },
-    }),
-  ]);
+export async function getTournamentPlayerStats(tournamentId: string): Promise<PlayerStats[]> {
+  const user = await requireUser();
+  if (!user.team) return [];
+  const t = await prisma.tournament.findUnique({
+    where: { id: tournamentId },
+    select: { teamId: true },
+  });
+  if (!t || t.teamId !== user.team.id) return [];
 
-  const stats: Record<string, { goals: number; assists: number; pointsPlayed: number }> = {};
+  const points = await prisma.point.findMany({
+    where: { game: { tournamentId } },
+    select: {
+      ourOffense: true,
+      scoredByUs: true,
+      goalPlayerId: true,
+      assistPlayerId: true,
+      players: { select: { playerId: true } },
+    },
+  });
 
-  for (const g of goalsData) {
-    if (!g.goalPlayerId) continue;
-    stats[g.goalPlayerId] ??= { goals: 0, assists: 0, pointsPlayed: 0 };
-    stats[g.goalPlayerId].goals = g._count.goalPlayerId;
+  const playerIds = new Set<string>();
+  for (const pt of points) {
+    for (const pp of pt.players) playerIds.add(pp.playerId);
+    if (pt.goalPlayerId) playerIds.add(pt.goalPlayerId);
+    if (pt.assistPlayerId) playerIds.add(pt.assistPlayerId);
   }
-  for (const a of assistsData) {
-    if (!a.assistPlayerId) continue;
-    stats[a.assistPlayerId] ??= { goals: 0, assists: 0, pointsPlayed: 0 };
-    stats[a.assistPlayerId].assists = a._count.assistPlayerId;
-  }
-  for (const p of pointsPlayedData) {
-    stats[p.playerId] ??= { goals: 0, assists: 0, pointsPlayed: 0 };
-    stats[p.playerId].pointsPlayed = p._count.playerId;
-  }
-
-  const playerIds = Object.keys(stats);
-  if (playerIds.length === 0) return [];
+  if (playerIds.size === 0) return [];
 
   const players = await prisma.player.findMany({
-    where: { id: { in: playerIds } },
+    where: { id: { in: Array.from(playerIds) } },
     select: { id: true, name: true, number: true },
   });
 
-  return players
-    .map((p) => ({ ...p, ...(stats[p.id] ?? { goals: 0, assists: 0, pointsPlayed: 0 }) }))
-    .sort((a, b) => b.goals - a.goals || b.assists - a.assists || b.pointsPlayed - a.pointsPlayed);
+  return computePlayerStatsFromPoints(points, players).sort(
+    (a: PlayerStats, b: PlayerStats) =>
+      b.goals - a.goals || b.assists - a.assists || b.pointsPlayed - a.pointsPlayed,
+  );
+}
+
+const GROUP_SIZES = [2, 3, 4, 5];
+const MIN_POINTS_TOGETHER = 3;
+
+export async function getTournamentGroupStats(tournamentId: string): Promise<GroupStats[]> {
+  const user = await requireUser();
+  if (!user.team) return [];
+  const t = await prisma.tournament.findUnique({
+    where: { id: tournamentId },
+    select: { teamId: true },
+  });
+  if (!t || t.teamId !== user.team.id) return [];
+
+  const points = await prisma.point.findMany({
+    where: { game: { tournamentId } },
+    select: {
+      ourOffense: true,
+      scoredByUs: true,
+      goalPlayerId: true,
+      assistPlayerId: true,
+      players: { select: { playerId: true } },
+    },
+  });
+
+  const playerIds = new Set<string>();
+  for (const pt of points) for (const pp of pt.players) playerIds.add(pp.playerId);
+  if (playerIds.size === 0) return [];
+
+  const players = await prisma.player.findMany({
+    where: { id: { in: Array.from(playerIds) } },
+    select: { id: true, name: true, number: true },
+  });
+
+  return computeGroupStatsFromPoints(points, players, GROUP_SIZES, MIN_POINTS_TOGETHER);
 }
