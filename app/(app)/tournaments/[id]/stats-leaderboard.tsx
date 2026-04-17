@@ -49,6 +49,7 @@ function plusMinusTone(n: number): string | undefined {
 const MIN_OPPS_FOR_RATE = 3;
 
 function rate(num: number, denom: number): number {
+  if (!denom) return Number.NEGATIVE_INFINITY;
   return denom >= MIN_OPPS_FOR_RATE ? num / denom : -1;
 }
 
