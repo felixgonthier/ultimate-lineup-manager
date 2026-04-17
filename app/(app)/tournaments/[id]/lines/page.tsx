@@ -1,6 +1,7 @@
 import { notFound } from "next/navigation";
 import Link from "next/link";
 import { prisma } from "@/lib/db";
+import { requireUser } from "@/lib/session";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft } from "lucide-react";
 import { LinesManager } from "./lines-manager";
@@ -13,6 +14,8 @@ export default async function LinesPage({
   params: Promise<{ id: string }>;
 }) {
   const { id: tournamentId } = await params;
+  const user = await requireUser();
+  if (!user.team) notFound();
 
   const tournament = await prisma.tournament.findUnique({
     where: { id: tournamentId },
@@ -34,7 +37,7 @@ export default async function LinesPage({
     },
   });
 
-  if (!tournament) notFound();
+  if (!tournament || tournament.teamId !== user.team.id) notFound();
 
   return (
     <div className="max-w-lg mx-auto px-4 py-6 space-y-4">

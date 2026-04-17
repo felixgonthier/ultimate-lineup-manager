@@ -2,6 +2,11 @@
 
 import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
+import {
+  assertGameOwned,
+  assertPlayerOwned,
+  requireTeam,
+} from "@/lib/session";
 
 export async function recordPoint(data: {
   gameId: string;
@@ -13,18 +18,29 @@ export async function recordPoint(data: {
   assistPlayerId?: string;
   goalPlayerId?: string;
 }) {
+  const { team } = await requireTeam();
+  await assertGameOwned(data.gameId, team.id);
+  await Promise.all(
+    data.playerIds.map((id: string) => assertPlayerOwned(id, team.id)),
+  );
+  if (data.assistPlayerId) {
+    await assertPlayerOwned(data.assistPlayerId, team.id);
+  }
+  if (data.goalPlayerId) {
+    await assertPlayerOwned(data.goalPlayerId, team.id);
+  }
+
   const { playerIds, tournamentId, ...pointData } = data;
 
   const point = await prisma.point.create({
     data: {
       ...pointData,
       players: {
-        create: playerIds.map((playerId) => ({ playerId })),
+        create: playerIds.map((playerId: string) => ({ playerId })),
       },
     },
   });
 
-  // Update game score
   if (pointData.scoredByUs !== undefined) {
     const game = await prisma.game.findUnique({
       where: { id: pointData.gameId },
@@ -46,6 +62,9 @@ export async function recordPoint(data: {
 }
 
 export async function deleteLastPoint(gameId: string, tournamentId: string) {
+  const { team } = await requireTeam();
+  await assertGameOwned(gameId, team.id);
+
   const lastPoint = await prisma.point.findFirst({
     where: { gameId },
     orderBy: { pointNumber: "desc" },
@@ -53,7 +72,6 @@ export async function deleteLastPoint(gameId: string, tournamentId: string) {
 
   if (!lastPoint) return null;
 
-  // Reverse score if needed
   if (lastPoint.scoredByUs !== null) {
     const game = await prisma.game.findUnique({ where: { id: gameId } });
     if (game) {
@@ -74,6 +92,9 @@ export async function deleteLastPoint(gameId: string, tournamentId: string) {
 }
 
 export async function getPlayerPointCounts(gameId: string) {
+  const { team } = await requireTeam();
+  await assertGameOwned(gameId, team.id);
+
   const pointPlayers = await prisma.pointPlayer.findMany({
     where: { point: { gameId } },
     include: { player: true },

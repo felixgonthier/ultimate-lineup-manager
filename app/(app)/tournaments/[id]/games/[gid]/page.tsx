@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getGame } from "@/lib/actions/games";
+import { computePlayerStatsFromPoints } from "@/lib/stats";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, Play } from "lucide-react";
+import { StatsLeaderboard } from "../../stats-leaderboard";
 export const dynamic = "force-dynamic";
 
 export default async function GamePage({
@@ -16,26 +17,27 @@ export default async function GamePage({
   const game = await getGame(gid);
   if (!game || game.tournament.id !== tournamentId) notFound();
 
-  // Get all unique players from points, tallying pts/assists/goals
-  const playerMap = new Map<string, { name: string; number: number | null; role: string; count: number; assists: number; goals: number }>();
-
-  function ensurePlayer(player: { id: string; name: string; number: number | null; role: string }) {
-    if (!playerMap.has(player.id)) {
-      playerMap.set(player.id, { name: player.name, number: player.number, role: player.role, count: 0, assists: 0, goals: 0 });
+  const playerLookup = new Map<string, { id: string; name: string; number: number | null }>();
+  for (const pt of game.points) {
+    for (const pp of pt.players) {
+      playerLookup.set(pp.player.id, { id: pp.player.id, name: pp.player.name, number: pp.player.number });
     }
-    return playerMap.get(player.id)!;
-  }
-
-  for (const point of game.points) {
-    for (const pp of point.players) {
-      ensurePlayer(pp.player).count++;
+    if (pt.assistPlayer) {
+      playerLookup.set(pt.assistPlayer.id, { id: pt.assistPlayer.id, name: pt.assistPlayer.name, number: pt.assistPlayer.number });
     }
-    if (point.assistPlayer) ensurePlayer(point.assistPlayer).assists++;
-    if (point.goalPlayer) ensurePlayer(point.goalPlayer).goals++;
+    if (pt.goalPlayer) {
+      playerLookup.set(pt.goalPlayer.id, { id: pt.goalPlayer.id, name: pt.goalPlayer.name, number: pt.goalPlayer.number });
+    }
   }
-
-  const sortedPlayers = Array.from(playerMap.entries()).sort(
-    ([, a], [, b]) => b.count - a.count
+  const playerStats = computePlayerStatsFromPoints(
+    game.points.map((pt: (typeof game.points)[number]) => ({
+      ourOffense: pt.ourOffense,
+      scoredByUs: pt.scoredByUs,
+      goalPlayerId: pt.goalPlayerId,
+      assistPlayerId: pt.assistPlayerId,
+      players: pt.players.map((pp: (typeof pt.players)[number]) => ({ playerId: pp.player.id })),
+    })),
+    Array.from(playerLookup.values()),
   );
 
   return (
@@ -76,38 +78,7 @@ export default async function GamePage({
       </Card>
 
       {/* Player stats */}
-      {sortedPlayers.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base">Player Stats</CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="border-b">
-                  <th className="text-left px-4 py-2 font-medium text-muted-foreground">Player</th>
-                  <th className="text-right px-3 py-2 font-medium text-muted-foreground w-12">Pts</th>
-                  <th className="text-right px-3 py-2 font-medium text-muted-foreground w-12">Ast</th>
-                  <th className="text-right px-4 py-2 font-medium text-muted-foreground w-12">Gls</th>
-                </tr>
-              </thead>
-              <tbody>
-                {sortedPlayers.map(([playerId, p]) => (
-                  <tr key={playerId} className="border-b last:border-0">
-                    <td className="px-4 py-2.5 font-medium">
-                      {p.number != null && <span className="text-muted-foreground font-mono text-xs mr-1">#{p.number}</span>}
-                      {p.name}
-                    </td>
-                    <td className="px-3 py-2.5 text-right tabular-nums">{p.count}</td>
-                    <td className="px-3 py-2.5 text-right tabular-nums text-muted-foreground">{p.assists || "—"}</td>
-                    <td className="px-4 py-2.5 text-right tabular-nums text-muted-foreground">{p.goals || "—"}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </CardContent>
-        </Card>
-      )}
+      {playerStats.length > 0 && <StatsLeaderboard stats={playerStats} />}
 
       {/* Points history */}
       {game.points.length > 0 && (

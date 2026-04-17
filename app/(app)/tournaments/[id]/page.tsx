@@ -1,11 +1,17 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getTournament, getTournamentPlayerStats } from "@/lib/actions/tournaments";
+import {
+  getTournament,
+  getTournamentGroupStats,
+  getTournamentPlayerStats,
+} from "@/lib/actions/tournaments";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
-import { Plus, ChevronLeft, ChevronRight, Layers, Play, Trophy } from "lucide-react";
+import { Plus, ChevronLeft, ChevronRight, Layers, Play } from "lucide-react";
 import { DeleteTournamentButton } from "./delete-button";
+import { StatsLeaderboard } from "./stats-leaderboard";
+import { CombosCard } from "./combos-card";
 
 export const dynamic = "force-dynamic";
 
@@ -15,9 +21,10 @@ export default async function TournamentPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [tournament, playerStats] = await Promise.all([
+  const [tournament, playerStats, groupStats] = await Promise.all([
     getTournament(id),
     getTournamentPlayerStats(id),
+    getTournamentGroupStats(id),
   ]);
   if (!tournament) notFound();
 
@@ -72,40 +79,10 @@ export default async function TournamentPage({
       </Card>
 
       {/* Stats leaderboard */}
-      {playerStats.length > 0 && (
-        <Card>
-          <CardHeader className="pb-2">
-            <CardTitle className="text-base flex items-center gap-2">
-              <Trophy className="h-4 w-4" />
-              Stats
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="grid grid-cols-[1fr_auto_auto_auto] text-xs text-muted-foreground font-medium uppercase tracking-wide px-4 py-1 border-b">
-              <span>Player</span>
-              <span className="w-8 text-center">G</span>
-              <span className="w-8 text-center">A</span>
-              <span className="w-8 text-center">Pts</span>
-            </div>
-            {playerStats.map((s: (typeof playerStats)[number], i: number) => (
-              <div
-                key={s.id}
-                className={`grid grid-cols-[1fr_auto_auto_auto] items-center px-4 py-2 text-sm ${i < playerStats.length - 1 ? "border-b" : ""}`}
-              >
-                <span className="font-medium truncate">
-                  {s.number != null && (
-                    <span className="text-muted-foreground mr-1.5">#{s.number}</span>
-                  )}
-                  {s.name}
-                </span>
-                <span className="w-8 text-center tabular-nums">{s.goals || "–"}</span>
-                <span className="w-8 text-center tabular-nums">{s.assists || "–"}</span>
-                <span className="w-8 text-center tabular-nums text-muted-foreground">{s.pointsPlayed}</span>
-              </div>
-            ))}
-          </CardContent>
-        </Card>
-      )}
+      {playerStats.length > 0 && <StatsLeaderboard stats={playerStats} />}
+
+      {/* Combos */}
+      {groupStats.length > 0 && <CombosCard groups={groupStats} />}
 
       {/* Games section */}
       <div className="space-y-3">
