@@ -46,7 +46,7 @@ function plusMinusTone(n: number): string | undefined {
   return undefined;
 }
 
-const MIN_OPPS_FOR_RATE = 3;
+const MIN_OPPS_FOR_RATE = 1;
 
 function rate(num: number, denom: number): number {
   if (!denom) return Number.NEGATIVE_INFINITY;
@@ -98,7 +98,8 @@ const COLUMNS: Record<View, Column[]> = {
     {
       key: "hold",
       label: "Hold",
-      display: (s: PlayerStats) => pctOrDash(s.holds, s.holdOpps),
+      display: (s: PlayerStats) =>
+        s.holdOpps >= MIN_OPPS_FOR_RATE ? pctOrDash(s.holds, s.holdOpps) : "–",
       sortValue: (s: PlayerStats) => rate(s.holds, s.holdOpps),
     },
   ],
@@ -125,7 +126,10 @@ const COLUMNS: Record<View, Column[]> = {
     {
       key: "break",
       label: "Brk",
-      display: (s: PlayerStats) => pctOrDash(s.breaks, s.breakOpps),
+      display: (s: PlayerStats) =>
+        s.breakOpps >= MIN_OPPS_FOR_RATE
+          ? pctOrDash(s.breaks, s.breakOpps)
+          : "–",
       sortValue: (s: PlayerStats) => rate(s.breaks, s.breakOpps),
     },
   ],
