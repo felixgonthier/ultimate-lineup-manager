@@ -158,10 +158,19 @@ const DEFAULT_SORT: Record<View, string> = {
   plusminus: "pm",
 };
 
-export function StatsLeaderboard({ stats }: { stats: PlayerStats[] }) {
+export function StatsLeaderboard({
+  stats,
+  showAdvanced,
+}: {
+  stats: PlayerStats[];
+  showAdvanced: boolean;
+}) {
   const [view, setView] = useState<View>("overall");
   const [sortKey, setSortKey] = useState<string | null>(null);
   const [sortDir, setSortDir] = useState<Dir>("desc");
+  const visibleViews = showAdvanced
+    ? VIEWS
+    : VIEWS.filter((v: (typeof VIEWS)[number]) => v.id === "overall");
   const cols = COLUMNS[view];
   const activeKey = sortKey ?? DEFAULT_SORT[view];
 
@@ -216,28 +225,30 @@ export function StatsLeaderboard({ stats }: { stats: PlayerStats[] }) {
         </CardTitle>
       </CardHeader>
       <CardContent className="p-0">
-        <div className="px-4 pb-2">
-          <div className="inline-flex rounded-lg bg-muted p-0.5 text-xs font-medium">
-            {VIEWS.map((v: (typeof VIEWS)[number]) => (
-              <button
-                key={v.id}
-                onClick={() => {
-                  setView(v.id);
-                  setSortKey(null);
-                  setSortDir("desc");
-                }}
-                className={cn(
-                  "px-2.5 py-1 rounded-md transition-colors",
-                  view === v.id
-                    ? "bg-background text-foreground shadow-sm"
-                    : "text-muted-foreground hover:text-foreground",
-                )}
-              >
-                {v.label}
-              </button>
-            ))}
+        {visibleViews.length > 1 && (
+          <div className="px-4 pb-2">
+            <div className="inline-flex rounded-lg bg-muted p-0.5 text-xs font-medium">
+              {visibleViews.map((v: (typeof VIEWS)[number]) => (
+                <button
+                  key={v.id}
+                  onClick={() => {
+                    setView(v.id);
+                    setSortKey(null);
+                    setSortDir("desc");
+                  }}
+                  className={cn(
+                    "px-2.5 py-1 rounded-md transition-colors",
+                    view === v.id
+                      ? "bg-background text-foreground shadow-sm"
+                      : "text-muted-foreground hover:text-foreground",
+                  )}
+                >
+                  {v.label}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
+        )}
         <div
           className={cn(
             "grid text-xs text-muted-foreground font-medium uppercase tracking-wide px-4 py-1 border-b",

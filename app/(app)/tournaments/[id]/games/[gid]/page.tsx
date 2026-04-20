@@ -2,6 +2,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getGame } from "@/lib/actions/games";
 import { computePlayerStatsFromPoints } from "@/lib/stats";
+import { requireUser } from "@/lib/session";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { ChevronLeft, Play } from "lucide-react";
@@ -14,8 +15,9 @@ export default async function GamePage({
   params: Promise<{ id: string; gid: string }>;
 }) {
   const { id: tournamentId, gid } = await params;
-  const game = await getGame(gid);
+  const [user, game] = await Promise.all([requireUser(), getGame(gid)]);
   if (!game || game.tournament.id !== tournamentId) notFound();
+  const isAdmin = user.type === "ADMIN";
 
   const playerLookup = new Map<string, { id: string; name: string; number: number | null }>();
   for (const pt of game.points) {
@@ -78,7 +80,9 @@ export default async function GamePage({
       </Card>
 
       {/* Player stats */}
-      {playerStats.length > 0 && <StatsLeaderboard stats={playerStats} />}
+      {playerStats.length > 0 && (
+        <StatsLeaderboard stats={playerStats} showAdvanced={isAdmin} />
+      )}
 
       {/* Points history */}
       {game.points.length > 0 && (

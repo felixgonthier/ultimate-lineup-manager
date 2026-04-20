@@ -5,6 +5,7 @@ import {
   getTournamentGroupStats,
   getTournamentPlayerStats,
 } from "@/lib/actions/tournaments";
+import { requireUser } from "@/lib/session";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -21,12 +22,14 @@ export default async function TournamentPage({
   params: Promise<{ id: string }>;
 }) {
   const { id } = await params;
-  const [tournament, playerStats, groupStats] = await Promise.all([
+  const [user, tournament, playerStats, groupStats] = await Promise.all([
+    requireUser(),
     getTournament(id),
     getTournamentPlayerStats(id),
     getTournamentGroupStats(id),
   ]);
   if (!tournament) notFound();
+  const isAdmin = user.type === "ADMIN";
 
   return (
     <div className="max-w-lg mx-auto px-4 py-6 space-y-4">
@@ -79,10 +82,12 @@ export default async function TournamentPage({
       </Card>
 
       {/* Stats leaderboard */}
-      {playerStats.length > 0 && <StatsLeaderboard stats={playerStats} />}
+      {playerStats.length > 0 && (
+        <StatsLeaderboard stats={playerStats} showAdvanced={isAdmin} />
+      )}
 
       {/* Combos */}
-      {groupStats.length > 0 && <CombosCard groups={groupStats} />}
+      {isAdmin && groupStats.length > 0 && <CombosCard groups={groupStats} />}
 
       {/* Games section */}
       <div className="space-y-3">

@@ -17,11 +17,17 @@ enum LineType {
   POWER
 }
 
+enum UserType {
+  NORMAL
+  ADMIN
+}
+
 model User {
   id           String   @id @default(cuid())
   username     String   @unique
   passwordHash String
   name         String?
+  type         UserType @default(NORMAL)
   createdAt    DateTime @default(now())
   team         Team?
 }
