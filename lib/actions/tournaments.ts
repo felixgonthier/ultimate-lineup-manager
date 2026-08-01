@@ -71,7 +71,12 @@ export async function createTournament(data: {
 
 export async function updateTournament(
   id: string,
-  data: { name?: string; location?: string; date?: Date },
+  data: {
+    name?: string;
+    location?: string;
+    date?: Date;
+    lineupMode?: "FAIR" | "BALANCED" | "RESULTS";
+  },
 ) {
   const { team } = await requireTeam();
   await assertTournamentOwned(id, team.id);
@@ -105,9 +110,10 @@ export async function getTournamentPlayerStats(tournamentId: string): Promise<Pl
     select: {
       ourOffense: true,
       scoredByUs: true,
+      callahan: true,
       goalPlayerId: true,
       assistPlayerId: true,
-      players: { select: { playerId: true } },
+      players: { select: { playerId: true, blocks: true } },
     },
   });
 
@@ -147,9 +153,10 @@ export async function getTournamentGroupStats(tournamentId: string): Promise<Gro
     select: {
       ourOffense: true,
       scoredByUs: true,
+      callahan: true,
       goalPlayerId: true,
       assistPlayerId: true,
-      players: { select: { playerId: true } },
+      players: { select: { playerId: true, blocks: true } },
     },
   });
 

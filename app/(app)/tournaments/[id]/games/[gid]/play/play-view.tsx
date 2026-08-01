@@ -4,6 +4,21 @@ import { useState, useTransition, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { recordPoint, deleteLastPoint } from "@/lib/actions/points";
+import { isCallahanPoint } from "@/lib/stats";
+import {
+  clampRung,
+  rungLabel,
+  suggestLine,
+  type Candidate,
+  type CandidateRatings,
+  type LineupMode,
+  type Pool,
+  type Role,
+  type Rung,
+  type Tier,
+  type Variance,
+  type WindStrength,
+} from "@/lib/lineup";
 import { Button } from "@/components/ui/button";
 import {
   Sheet,
@@ -25,6 +40,9 @@ import {
   Timer,
   UserX,
   Users,
+  Shield,
+  Wind,
+  Star,
 } from "lucide-react";
 
 type Player = {
@@ -32,7 +50,13 @@ type Player = {
   name: string;
   number: number | null;
   role: string;
+  pool: Pool;
+  tier: Tier;
+  variance: Variance;
+  /** Points played in this game — fairness. */
   pointCount: number;
+  /** Points played across the tournament — fatigue. */
+  tournamentPointCount: number;
   lineIds: string[];
 };
 
@@ -44,6 +68,12 @@ type Game = {
   opponentName: string;
   scoreUs: number;
   scoreThem: number;
+  /** Already resolved server-side: game override ?? tournament default. */
+  lineupMode: LineupMode;
+  windStrength: WindStrength;
+  /** Which end we attack on point 1. null = wind irrelevant. */
+  startAttackingUpwind: boolean | null;
+  fairnessFloor: number | null;
 };
 
 type Step = "select" | "outcome";
@@ -59,48 +89,25 @@ const ROLE_COLORS: Record<string, string> = {
   HYBRID: "bg-purple-100 text-purple-700",
 };
 
-// Recommend 7 players: fairness (fewest points) + at least 1 handler, 3 handler+hybrid
-function computeRecommendedIds(players: Player[]): Set<string> {
-  if (players.length <= 7) return new Set(players.map((p) => p.id));
+const MODE_ORDER: LineupMode[] = ["FAIR", "BALANCED", "RESULTS"];
+const MODE_LABELS: Record<LineupMode, string> = {
+  FAIR: "Fair",
+  BALANCED: "Balanced",
+  RESULTS: "Results",
+};
+const MODE_COLORS: Record<LineupMode, string> = {
+  FAIR: "bg-sky-100 text-sky-700 border-sky-200",
+  BALANCED: "bg-muted text-foreground border-input",
+  RESULTS: "bg-rose-100 text-rose-700 border-rose-200",
+};
 
-  const sorted = [...players].sort((a, b) => a.pointCount - b.pointCount);
-  const handlers = sorted.filter((p) => p.role === "HANDLER");
-  const handlerHybrids = sorted.filter(
-    (p) => p.role === "HANDLER" || p.role === "HYBRID",
-  );
-
-  // Can't meet constraints — fall back to pure fairness
-  if (handlers.length === 0 || handlerHybrids.length < 3) {
-    return new Set(sorted.slice(0, 7).map((p) => p.id));
-  }
-
-  const pickedIds = new Set<string>();
-  const picked: Player[] = [];
-
-  // 1. Lowest-point handler (mandatory)
-  picked.push(handlers[0]);
-  pickedIds.add(handlers[0].id);
-
-  // 2. Fill to 3 handler+hybrid (by fewest points)
-  for (const p of handlerHybrids) {
-    if (picked.length >= 3) break;
-    if (!pickedIds.has(p.id)) {
-      picked.push(p);
-      pickedIds.add(p.id);
-    }
-  }
-
-  // 3. Fill remaining 4 slots with fewest-points players
-  for (const p of sorted) {
-    if (picked.length >= 7) break;
-    if (!pickedIds.has(p.id)) {
-      picked.push(p);
-      pickedIds.add(p.id);
-    }
-  }
-
-  return new Set(picked.map((p) => p.id));
-}
+const RUNG_ORDER: Rung[] = [
+  "DEPTH",
+  "ROTATION",
+  "STARTING",
+  "HALF_PUSH",
+  "FULL_PUSH",
+];
 
 export function PlayView({
   game,
@@ -109,6 +116,7 @@ export function PlayView({
   nextPointNumber,
   hotPlayerIds,
   consecutiveCounts,
+  ratings,
 }: {
   game: Game;
   players: Player[];
@@ -116,6 +124,8 @@ export function PlayView({
   nextPointNumber: number;
   hotPlayerIds: string[];
   consecutiveCounts: Record<string, number>;
+  /** Measured hold/break ratings by player id. Empty until there are rated games. */
+  ratings: Record<string, CandidateRatings>;
 }) {
   const router = useRouter();
   const [, startTransition] = useTransition();
@@ -130,6 +140,7 @@ export function PlayView({
   const [scoredByUs, setScoredByUs] = useState<boolean | null>(null);
   const [assistId, setAssistId] = useState<string | null>(null);
   const [goalId, setGoalId] = useState<string | null>(null);
+  const [blocks, setBlocks] = useState<Record<string, number>>({});
   const [submitting, setSubmitting] = useState(false);
   const [subbingOutId, setSubbingOutId] = useState<string | null>(null);
   const [injuredIds, setInjuredIds] = useState<Set<string>>(new Set());
@@ -137,11 +148,50 @@ export function PlayView({
     Record<string, string[]>
   >({});
   const [manageOpen, setManageOpen] = useState(false);
+  // Mode can be flipped mid-game (a blowout in pool play becomes a chance to
+  // give minutes away). Starts from the game's resolved mode.
+  const [mode, setMode] = useState<LineupMode>(game.lineupMode);
+  // Teams switch ends after every score, so this flips every point regardless of
+  // who scored — no need to ask. null when wind is irrelevant.
+  const [attackingUpwind, setAttackingUpwind] = useState<boolean | null>(
+    game.startAttackingUpwind,
+  );
+  // null = let the situation pick the rung.
+  const [rungOverride, setRungOverride] = useState<Rung | null>(null);
 
   const hotSet = useMemo(() => new Set(hotPlayerIds), [hotPlayerIds]);
 
   function effectiveLineIds(p: Player): string[] {
     return playerLineOverrides[p.id] ?? p.lineIds;
+  }
+
+  function clearBlocks(id: string) {
+    setBlocks((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }
+
+  // A goal with no assist can only have been a callahan — never asked, always derived.
+  const isCallahan = isCallahanPoint({
+    scoredByUs,
+    goalPlayerId: goalId,
+    assistPlayerId: assistId,
+  });
+
+  // A callahan is by definition a block by the scorer, so it counts as one for free.
+  function impliedBlocks(id: string): number {
+    return isCallahan && id === goalId ? 1 : 0;
+  }
+
+  function shownBlocks(id: string): number {
+    return Math.max(blocks[id] ?? 0, impliedBlocks(id));
+  }
+
+  function addBlock(id: string) {
+    setBlocks((prev) => ({ ...prev, [id]: shownBlocks(id) + 1 }));
   }
 
   function toggleInjury(id: string) {
@@ -161,6 +211,7 @@ export function PlayView({
       });
       if (assistId === id) setAssistId(null);
       if (goalId === id) setGoalId(null);
+      clearBlocks(id);
     }
   }
 
@@ -175,17 +226,58 @@ export function PlayView({
     });
   }
 
-  // Filter + sort players by fewest points (injured players excluded)
+  // Filter + sort players by fewest points (injured players excluded). Kept in
+  // fewest-points order because that order is the tie-break the suggester
+  // inherits, and it is what makes FAIR mode reproduce the original picker.
   const visiblePlayers = players
     .filter((p) => !injuredIds.has(p.id))
     .filter((p) => !selectedLine || effectiveLineIds(p).includes(selectedLine))
     .sort((a, b) => a.pointCount - b.pointCount);
 
-  const recommendedIds = useMemo(
-    () => computeRecommendedIds(visiblePlayers),
-    // visiblePlayers identity changes with selectedLine/players, so these are the real deps
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [selectedLine, players],
+  const situation = {
+    ourOffense,
+    attackingUpwind,
+    windStrength: game.windStrength,
+  };
+
+  const hasRatings = Object.keys(ratings).length > 0;
+
+  // Derived every render rather than memoised: it depends on injuries, line
+  // overrides, mode, rung and wind, and a stale memo here used to recommend
+  // injured players.
+  const suggestion = suggestLine({
+    candidates: visiblePlayers.map(
+      (p: Player): Candidate => ({
+        id: p.id,
+        role: p.role as Role,
+        pool: p.pool,
+        tier: p.tier,
+        variance: p.variance,
+        ratings: ratings[p.id],
+        gamePoints: p.pointCount,
+        tournamentPoints: p.tournamentPointCount,
+        streak: consecutiveCounts[p.id] ?? 0,
+      }),
+    ),
+    mode,
+    situation,
+    rung: rungOverride ?? undefined,
+    fairnessFloor: game.fairnessFloor ?? undefined,
+  });
+  const recommendedIds = new Set<string>(suggestion.playerIds);
+
+  // Fair mode keeps the familiar fewest-points ordering; the other modes lead
+  // with whoever the suggester rates highest for this point.
+  const displayPlayers =
+    mode === "FAIR"
+      ? visiblePlayers
+      : [...visiblePlayers].sort(
+          (a: Player, b: Player) =>
+            suggestion.scores[b.id] - suggestion.scores[a.id],
+        );
+
+  const availableRungs = RUNG_ORDER.filter(
+    (r: Rung) => clampRung(mode, r) === r,
   );
 
   function togglePlayer(id: string) {
@@ -215,6 +307,7 @@ export function PlayView({
     });
     if (assistId === outId) setAssistId(null);
     if (goalId === outId) setGoalId(null);
+    clearBlocks(outId);
     setSubbingOutId(null);
   }
 
@@ -227,7 +320,10 @@ export function PlayView({
       tournamentId: game.tournamentId,
       pointNumber: nextPointNumber,
       ourOffense,
+      attackingUpwind,
+      rung: mode === "FAIR" ? null : suggestion.rung,
       playerIds: Array.from(selectedIds),
+      blocks,
       scoredByUs,
       assistPlayerId: scoredByUs && assistId ? assistId : undefined,
       goalPlayerId: scoredByUs && goalId ? goalId : undefined,
@@ -241,9 +337,13 @@ export function PlayView({
     setStep("select");
     setSelectedIds(new Set());
     setOurOffense(!scoredByUs); // scored → we kick, start D; conceded → we receive, start O
+    // Ends switch after every score, so direction flips no matter who scored.
+    setAttackingUpwind((prev) => (prev === null ? null : !prev));
+    setRungOverride(null);
     setScoredByUs(null);
     setAssistId(null);
     setGoalId(null);
+    setBlocks({});
     setSubbingOutId(null);
     setSubmitting(false);
   }
@@ -432,29 +532,71 @@ export function PlayView({
               </div>
             </div>
 
-            {/* Scorer details — only if we scored */}
-            {scoredByUs === true && (
-              <div className="space-y-0.5">
-                <div className="flex items-center px-1 pb-1">
-                  <span className="flex-1" />
+            {/* Per-player credit — D always, assist/goal once we know we scored */}
+            <div className="space-y-0.5">
+              <div className="flex items-center gap-1 px-1 pb-1">
+                <span className="flex-1" />
+                <span className="w-5 shrink-0" />
+                <span className="w-10 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  D
+                </span>
+                {scoredByUs === true && (
                   <span className="w-10 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                     Ast
                   </span>
+                )}
+                {scoredByUs === true && (
                   <span className="w-10 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                     Goal
                   </span>
-                </div>
-                {selectedPlayers.map((p) => {
-                  const isAssist = assistId === p.id;
-                  const isGoal = goalId === p.id;
-                  return (
-                    <div
-                      key={p.id}
-                      className="flex items-center gap-1 px-1 py-1"
+                )}
+              </div>
+              {selectedPlayers.map((p) => {
+                const isAssist = assistId === p.id;
+                const isGoal = goalId === p.id;
+                const blockCount = shownBlocks(p.id);
+                const canClearBlocks = (blocks[p.id] ?? 0) > 0;
+                return (
+                  <div key={p.id} className="flex items-center gap-1 px-1 py-1">
+                    <span className="flex-1 text-sm font-medium truncate">
+                      {p.name}
+                    </span>
+                    <button
+                      onClick={() => clearBlocks(p.id)}
+                      className={cn(
+                        "w-5 h-8 text-muted-foreground shrink-0 transition-opacity",
+                        canClearBlocks
+                          ? "opacity-100"
+                          : "opacity-0 pointer-events-none",
+                      )}
+                      tabIndex={canClearBlocks ? 0 : -1}
+                      aria-hidden={!canClearBlocks}
+                      title={`Clear ${p.name}'s Ds`}
                     >
-                      <span className="flex-1 text-sm font-medium truncate">
-                        {p.name}
-                      </span>
+                      <X className="h-3.5 w-3.5 mx-auto" />
+                    </button>
+                    <button
+                      onClick={() => addBlock(p.id)}
+                      className={cn(
+                        "w-10 h-8 rounded-lg text-xs font-bold border-2 transition-all shrink-0 flex items-center justify-center gap-0.5",
+                        blockCount > 0
+                          ? "border-sky-500 bg-sky-500 text-white"
+                          : "border-input text-muted-foreground hover:bg-accent",
+                      )}
+                      title={
+                        impliedBlocks(p.id) > 0 && !canClearBlocks
+                          ? "Callahan — block credited automatically"
+                          : blockCount > 0
+                            ? `${blockCount} D${blockCount > 1 ? "s" : ""} — tap to add another`
+                            : "Credit a defensive block"
+                      }
+                    >
+                      <Shield className="h-3.5 w-3.5" />
+                      {blockCount > 1 && (
+                        <span className="tabular-nums">{blockCount}</span>
+                      )}
+                    </button>
+                    {scoredByUs === true && (
                       <button
                         onClick={() => {
                           setAssistId(isAssist ? null : p.id);
@@ -469,6 +611,8 @@ export function PlayView({
                       >
                         A
                       </button>
+                    )}
+                    {scoredByUs === true && (
                       <button
                         onClick={() => {
                           setGoalId(isGoal ? null : p.id);
@@ -483,11 +627,11 @@ export function PlayView({
                       >
                         G
                       </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
+                    )}
+                  </div>
+                );
+              })}
+            </div>
 
             <Button
               className="w-full h-14 text-base font-bold"
@@ -542,11 +686,29 @@ export function PlayView({
                 </div>
               </div>
 
-              {/* Row 2: opponent · O/D toggle */}
-              <div className="flex items-center justify-between px-1">
-                <span className="text-sm font-medium text-muted-foreground">
-                  vs {game.opponentName}
-                </span>
+              {/* Row 2: opponent · mode · O/D toggle */}
+              <div className="flex items-center justify-between gap-2 px-1">
+                <div className="flex items-center gap-1.5 min-w-0">
+                  <span className="text-sm font-medium text-muted-foreground truncate">
+                    vs {game.opponentName}
+                  </span>
+                  <button
+                    onClick={() =>
+                      setMode(
+                        MODE_ORDER[
+                          (MODE_ORDER.indexOf(mode) + 1) % MODE_ORDER.length
+                        ],
+                      )
+                    }
+                    className={cn(
+                      "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border shrink-0 transition-colors",
+                      MODE_COLORS[mode],
+                    )}
+                    title="Playing-time mode — tap to change"
+                  >
+                    {MODE_LABELS[mode]}
+                  </button>
+                </div>
                 <div className="flex items-center bg-muted rounded-full p-0.5">
                   <button
                     onClick={() => setOurOffense(true)}
@@ -572,6 +734,67 @@ export function PlayView({
                   </button>
                 </div>
               </div>
+
+              {/* Row 2b: wind direction · aggression ladder (never in fair mode) */}
+              {(attackingUpwind !== null || mode !== "FAIR") && (
+                <div className="flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5">
+                  {attackingUpwind !== null && (
+                    <button
+                      onClick={() => setAttackingUpwind(!attackingUpwind)}
+                      className={cn(
+                        "flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-semibold border whitespace-nowrap shrink-0 transition-colors",
+                        attackingUpwind
+                          ? "border-orange-300 bg-orange-50 text-orange-700"
+                          : "border-emerald-300 bg-emerald-50 text-emerald-700",
+                      )}
+                      title="Flips automatically each point — tap to correct"
+                    >
+                      <Wind className="h-3 w-3 shrink-0" />
+                      {attackingUpwind ? "Upwind" : "Downwind"}
+                    </button>
+                  )}
+                  {mode !== "FAIR" && (
+                    <>
+                      <button
+                        onClick={() => setRungOverride(null)}
+                        className={cn(
+                          "px-2 py-1 rounded-full text-[11px] font-medium border whitespace-nowrap shrink-0 transition-colors",
+                          rungOverride === null
+                            ? "bg-primary text-primary-foreground border-primary"
+                            : "border-input hover:bg-accent",
+                        )}
+                      >
+                        Auto · {rungLabel(suggestion.rung, situation)}
+                      </button>
+                      {availableRungs.map((r: Rung) => (
+                        <button
+                          key={r}
+                          onClick={() =>
+                            setRungOverride(rungOverride === r ? null : r)
+                          }
+                          className={cn(
+                            "px-2 py-1 rounded-full text-[11px] font-medium border whitespace-nowrap shrink-0 transition-colors",
+                            rungOverride === r
+                              ? "bg-rose-500 text-white border-rose-500"
+                              : "border-input hover:bg-accent",
+                          )}
+                        >
+                          {rungLabel(r, situation)}
+                        </button>
+                      ))}
+                    </>
+                  )}
+                </div>
+              )}
+
+              {/* Says plainly whether measured rates are behind the call */}
+              {suggestion.metric && (
+                <p className="px-1 text-[10px] text-muted-foreground">
+                  {hasRatings
+                    ? `Team's best ${suggestion.metric} converters first`
+                    : "No rated games yet — ranking on assigned tiers"}
+                </p>
+              )}
 
               {/* Row 3: all line filters in one scrollable row */}
               {lines.length > 0 && (
@@ -637,12 +860,12 @@ export function PlayView({
           {/* Scrollable player list */}
           <div className="flex-1 overflow-y-auto">
             <div className="max-w-lg mx-auto px-4 py-2 space-y-1.5">
-              {visiblePlayers.length === 0 && (
+              {displayPlayers.length === 0 && (
                 <p className="text-sm text-muted-foreground text-center py-8">
                   No players in this line
                 </p>
               )}
-              {visiblePlayers.map((player) => {
+              {displayPlayers.map((player) => {
                 const selected = selectedIds.has(player.id);
                 const isHot = hotSet.has(player.id);
                 const streak = consecutiveCounts[player.id] ?? 0;
@@ -680,6 +903,16 @@ export function PlayView({
                       <span className="font-semibold text-sm truncate">
                         {player.name}
                       </span>
+                      {mode !== "FAIR" && player.tier === "STAR" && (
+                        <span title="Star" className="shrink-0">
+                          <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
+                        </span>
+                      )}
+                      {mode !== "FAIR" && player.pool !== "BOTH" && (
+                        <span className="text-[10px] font-bold text-muted-foreground shrink-0">
+                          {player.pool}
+                        </span>
+                      )}
                       <span
                         className={cn(
                           "text-xs px-1.5 py-0.5 rounded font-medium shrink-0",
@@ -753,7 +986,9 @@ export function PlayView({
                   )}
                 >
                   <Wand2 className="h-3.5 w-3.5" />
-                  Suggest
+                  {mode === "FAIR"
+                    ? "Suggest"
+                    : `Suggest · ${rungLabel(suggestion.rung, situation)}`}
                 </button>
               </div>
               <Button

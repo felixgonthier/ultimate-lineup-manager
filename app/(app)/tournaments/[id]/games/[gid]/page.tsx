@@ -35,9 +35,13 @@ export default async function GamePage({
     game.points.map((pt: (typeof game.points)[number]) => ({
       ourOffense: pt.ourOffense,
       scoredByUs: pt.scoredByUs,
+      callahan: pt.callahan,
       goalPlayerId: pt.goalPlayerId,
       assistPlayerId: pt.assistPlayerId,
-      players: pt.players.map((pp: (typeof pt.players)[number]) => ({ playerId: pp.player.id })),
+      players: pt.players.map((pp: (typeof pt.players)[number]) => ({
+        playerId: pp.player.id,
+        blocks: pp.blocks,
+      })),
     })),
     Array.from(playerLookup.values()),
   );
@@ -98,6 +102,9 @@ export default async function GamePage({
               const them = pointsSoFar.filter((p: (typeof game.points)[number]) => p.scoredByUs === false).length;
               const scored = point.scoredByUs === true;
               const lost = point.scoredByUs === false;
+              const blockers = point.players.filter(
+                (pp: (typeof point.players)[number]) => pp.blocks > 0,
+              );
 
               return (
                 <div
@@ -120,6 +127,12 @@ export default async function GamePage({
                       <span className={`font-bold tabular-nums text-sm ${scored ? "text-emerald-600" : lost ? "text-rose-500" : ""}`}>
                         {us}–{them}
                       </span>
+                      {/* Callahan */}
+                      {point.callahan && (
+                        <span className="text-[11px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-700">
+                          Callahan
+                        </span>
+                      )}
                       {/* Scorer */}
                       {point.goalPlayer && (
                         <span className="text-sm text-foreground/80 truncate">
@@ -130,6 +143,16 @@ export default async function GamePage({
                         </span>
                       )}
                     </div>
+                    {blockers.length > 0 && (
+                      <p className="text-xs text-sky-600 mt-1">
+                        D:{" "}
+                        {blockers
+                          .map((pp: (typeof point.players)[number]) =>
+                            pp.blocks > 1 ? `${pp.player.name} ×${pp.blocks}` : pp.player.name,
+                          )
+                          .join(" · ")}
+                      </p>
+                    )}
                     <p className="text-xs text-muted-foreground mt-1">
                       {point.players.map((pp: (typeof point.players)[number]) => pp.player.name).join(" · ")}
                     </p>

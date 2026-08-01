@@ -19,11 +19,18 @@ import { ChevronLeft, Trash2 } from "lucide-react";
 import Link from "next/link";
 
 type PlayerRole = "HANDLER" | "CUTTER" | "HYBRID";
+type PlayerPool = "O" | "D" | "BOTH";
+type PlayerTier = "STAR" | "CORE" | "DEPTH";
+type PlayerVariance = "LOW" | "HIGH";
+
 type Player = {
   id: string;
   name: string;
   number: number | null;
   role: PlayerRole;
+  pool: PlayerPool;
+  tier: PlayerTier;
+  variance: PlayerVariance;
   teamId: string;
 };
 
@@ -33,11 +40,70 @@ const ROLES: { value: PlayerRole; label: string }[] = [
   { value: "HYBRID", label: "Hybrid" },
 ];
 
+const POOLS: { value: PlayerPool; label: string }[] = [
+  { value: "O", label: "O-line" },
+  { value: "D", label: "D-line" },
+  { value: "BOTH", label: "Swing" },
+];
+
+const TIERS: { value: PlayerTier; label: string }[] = [
+  { value: "STAR", label: "Star" },
+  { value: "CORE", label: "Core" },
+  { value: "DEPTH", label: "Depth" },
+];
+
+const VARIANCES: { value: PlayerVariance; label: string }[] = [
+  { value: "LOW", label: "Low risk" },
+  { value: "HIGH", label: "High risk" },
+];
+
+function ChoiceRow<T extends string>({
+  label,
+  hint,
+  value,
+  options,
+  onChange,
+}: {
+  label: string;
+  hint?: string;
+  value: T;
+  options: { value: T; label: string }[];
+  onChange: (v: T) => void;
+}) {
+  return (
+    <div className="space-y-2">
+      <Label>{label}</Label>
+      {hint && <p className="text-xs text-muted-foreground">{hint}</p>}
+      <div
+        className={`grid gap-2 ${options.length === 2 ? "grid-cols-2" : "grid-cols-3"}`}
+      >
+        {options.map((o: { value: T; label: string }) => (
+          <button
+            key={o.value}
+            type="button"
+            onClick={() => onChange(o.value)}
+            className={`py-2 px-3 rounded-md border text-sm font-medium transition-colors ${
+              value === o.value
+                ? "bg-primary text-primary-foreground border-primary"
+                : "bg-background border-input hover:bg-accent"
+            }`}
+          >
+            {o.label}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 export function EditPlayerForm({ player, teamId }: { player: Player; teamId: string }) {
   const router = useRouter();
   const [name, setName] = useState(player.name);
   const [number, setNumber] = useState(player.number?.toString() ?? "");
   const [role, setRole] = useState<PlayerRole>(player.role);
+  const [pool, setPool] = useState<PlayerPool>(player.pool);
+  const [tier, setTier] = useState<PlayerTier>(player.tier);
+  const [variance, setVariance] = useState<PlayerVariance>(player.variance);
   const [loading, setLoading] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
 
@@ -48,6 +114,9 @@ export function EditPlayerForm({ player, teamId }: { player: Player; teamId: str
       name: name.trim(),
       number: number ? parseInt(number) : null,
       role,
+      pool,
+      tier,
+      variance,
     });
     router.push(`/teams/${teamId}`);
   }
@@ -122,25 +191,36 @@ export function EditPlayerForm({ player, teamId }: { player: Player; teamId: str
           />
         </div>
 
-        <div className="space-y-2">
-          <Label>Role</Label>
-          <div className="grid grid-cols-3 gap-2">
-            {ROLES.map((r) => (
-              <button
-                key={r.value}
-                type="button"
-                onClick={() => setRole(r.value)}
-                className={`py-2 px-3 rounded-md border text-sm font-medium transition-colors ${
-                  role === r.value
-                    ? "bg-primary text-primary-foreground border-primary"
-                    : "bg-background border-input hover:bg-accent"
-                }`}
-              >
-                {r.label}
-              </button>
-            ))}
-          </div>
-        </div>
+        <ChoiceRow
+          label="Role"
+          value={role}
+          options={ROLES}
+          onChange={setRole}
+        />
+
+        <ChoiceRow
+          label="Pool"
+          hint="Which unit they belong to. Swing players are eligible for both and get pulled in for high-leverage points."
+          value={pool}
+          options={POOLS}
+          onChange={setPool}
+        />
+
+        <ChoiceRow
+          label="Usage tier"
+          hint="Priority when a game is being played to win. Stars get the points that decide games."
+          value={tier}
+          options={TIERS}
+          onChange={setTier}
+        />
+
+        <ChoiceRow
+          label="Risk profile"
+          hint="Low-risk players protect O-line drives; high-risk players generate the blocks that win D points."
+          value={variance}
+          options={VARIANCES}
+          onChange={setVariance}
+        />
 
         <Button type="submit" className="w-full" disabled={loading || !name.trim()}>
           {loading ? "Saving…" : "Save Changes"}

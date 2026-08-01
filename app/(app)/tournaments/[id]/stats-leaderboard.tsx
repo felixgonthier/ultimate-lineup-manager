@@ -68,6 +68,12 @@ const COLUMNS: Record<View, Column[]> = {
       sortValue: (s: PlayerStats) => s.assists,
     },
     {
+      key: "d",
+      label: "D",
+      display: (s: PlayerStats) => countOrDash(s.blocks),
+      sortValue: (s: PlayerStats) => s.blocks,
+    },
+    {
       key: "pts",
       label: "Pts",
       display: (s: PlayerStats) => String(s.pointsPlayed),
@@ -122,6 +128,12 @@ const COLUMNS: Record<View, Column[]> = {
       label: "A",
       display: (s: PlayerStats) => countOrDash(s.dAssists),
       sortValue: (s: PlayerStats) => s.dAssists,
+    },
+    {
+      key: "d",
+      label: "D",
+      display: (s: PlayerStats) => countOrDash(s.blocks),
+      sortValue: (s: PlayerStats) => s.blocks,
     },
     {
       key: "break",
@@ -200,12 +212,16 @@ export function StatsLeaderboard({
     }
   }
 
-  const gridCols =
-    cols.length === 2
-      ? "grid-cols-[auto_1fr_auto_auto]"
-      : cols.length === 3
-        ? "grid-cols-[auto_1fr_auto_auto_auto]"
-        : "grid-cols-[auto_1fr_auto_auto_auto_auto]";
+  // Tailwind needs literal class names, so enumerate rather than build the template.
+  const GRID_COLS: Record<number, string> = {
+    2: "grid-cols-[auto_1fr_auto_auto]",
+    3: "grid-cols-[auto_1fr_auto_auto_auto]",
+    4: "grid-cols-[auto_1fr_auto_auto_auto_auto]",
+    5: "grid-cols-[auto_1fr_auto_auto_auto_auto_auto]",
+  };
+  const gridCols = GRID_COLS[cols.length] ?? GRID_COLS[5];
+  // Tighten the stat cells once there are enough columns to crowd a phone screen.
+  const cellWidth = cols.length >= 5 ? "w-9" : "w-11";
 
   function SortArrow({ active }: { active: boolean }) {
     if (!active) return null;
@@ -278,7 +294,8 @@ export function StatsLeaderboard({
               key={c.key}
               onClick={() => handleSort(c.key)}
               className={cn(
-                "w-11 text-center hover:text-foreground transition-colors flex items-center gap-1 justify-center",
+                "text-center hover:text-foreground transition-colors flex items-center gap-1 justify-center",
+                cellWidth,
                 activeKey === c.key && "text-foreground",
               )}
             >
@@ -303,7 +320,8 @@ export function StatsLeaderboard({
               <span
                 key={c.key}
                 className={cn(
-                  "w-11 text-center tabular-nums",
+                  "text-center tabular-nums",
+                  cellWidth,
                   c.dim && "text-muted-foreground",
                   c.tone?.(s),
                 )}

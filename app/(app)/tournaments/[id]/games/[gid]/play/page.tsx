@@ -1,6 +1,10 @@
 import { notFound } from "next/navigation";
 import { getGamePlayData } from "@/lib/actions/games";
-import { getPlayerPointCounts } from "@/lib/actions/points";
+import {
+  getPlayerPointCounts,
+  getTournamentPointCounts,
+} from "@/lib/actions/points";
+import { getLineupRatings } from "@/lib/actions/lineup";
 import { PlayView } from "./play-view";
 
 export const dynamic = "force-dynamic";
@@ -11,10 +15,13 @@ export default async function PlayPage({
   params: Promise<{ id: string; gid: string }>;
 }) {
   const { id: tournamentId, gid } = await params;
-  const [playData, pointCounts] = await Promise.all([
-    getGamePlayData(gid),
-    getPlayerPointCounts(gid),
-  ]);
+  const [playData, pointCounts, tournamentPointCounts, ratings] =
+    await Promise.all([
+      getGamePlayData(gid),
+      getPlayerPointCounts(gid),
+      getTournamentPointCounts(tournamentId),
+      getLineupRatings(),
+    ]);
 
   if (!playData || playData.game.tournament.id !== tournamentId) notFound();
 
@@ -70,7 +77,11 @@ export default async function PlayPage({
     name: p.name,
     number: p.number,
     role: p.role as string,
+    pool: p.pool,
+    tier: p.tier,
+    variance: p.variance,
     pointCount: pointCounts[p.id] ?? 0,
+    tournamentPointCount: tournamentPointCounts[p.id] ?? 0,
     lineIds: lines
       .filter((l: (typeof lines)[number]) =>
         l.players.some(
@@ -91,6 +102,11 @@ export default async function PlayPage({
         opponentName: game.opponentName,
         scoreUs: game.scoreUs,
         scoreThem: game.scoreThem,
+        // Per-game override wins; otherwise inherit the tournament default.
+        lineupMode: game.lineupMode ?? game.tournament.lineupMode,
+        windStrength: game.windStrength,
+        startAttackingUpwind: game.startAttackingUpwind,
+        fairnessFloor: game.fairnessFloor,
       }}
       players={players}
       lines={lines.map((l: (typeof lines)[number]) => ({
@@ -101,6 +117,7 @@ export default async function PlayPage({
       nextPointNumber={nextPointNumber}
       hotPlayerIds={hotPlayerIds}
       consecutiveCounts={consecutiveCounts}
+      ratings={ratings}
     />
   );
 }

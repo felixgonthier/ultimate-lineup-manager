@@ -9,6 +9,9 @@ import {
 } from "@/lib/session";
 
 type PlayerRole = "HANDLER" | "CUTTER" | "HYBRID";
+type PlayerPool = "O" | "D" | "BOTH";
+type PlayerTier = "STAR" | "CORE" | "DEPTH";
+type PlayerVariance = "LOW" | "HIGH";
 
 export async function getTeams() {
   const user = await requireUser();
@@ -77,6 +80,9 @@ export async function createPlayer(data: {
   name: string;
   number?: number | null;
   role: PlayerRole;
+  pool?: PlayerPool;
+  tier?: PlayerTier;
+  variance?: PlayerVariance;
 }) {
   const { team } = await requireTeam();
   if (team.id !== data.teamId) throw new Error("Not authorized");
@@ -91,6 +97,9 @@ export async function updatePlayer(
     name?: string;
     number?: number | null;
     role?: PlayerRole;
+    pool?: PlayerPool;
+    tier?: PlayerTier;
+    variance?: PlayerVariance;
     active?: boolean;
   },
 ) {

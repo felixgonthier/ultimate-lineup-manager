@@ -57,6 +57,18 @@ export async function requireTeam() {
   return { user, team: user.team };
 }
 
+export async function requireAdmin() {
+  const user = await requireUser();
+  if (user.type !== "ADMIN") redirect("/");
+  return user;
+}
+
+export async function requireAdminTeam() {
+  const { user, team } = await requireTeam();
+  if (user.type !== "ADMIN") redirect("/");
+  return { user, team };
+}
+
 export async function assertTournamentOwned(tournamentId: string, teamId: string) {
   const t = await prisma.tournament.findUnique({
     where: { id: tournamentId },

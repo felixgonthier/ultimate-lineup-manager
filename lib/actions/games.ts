@@ -66,6 +66,28 @@ export async function updateGameScore(
   return game;
 }
 
+/**
+ * Lineup settings for a single game. `lineupMode: null` falls back to the
+ * tournament default; `startAttackingUpwind: null` means wind is irrelevant.
+ */
+export async function updateGameLineupSettings(
+  id: string,
+  tournamentId: string,
+  data: {
+    lineupMode?: "FAIR" | "BALANCED" | "RESULTS" | null;
+    windStrength?: "NONE" | "MODERATE" | "STRONG";
+    startAttackingUpwind?: boolean | null;
+    fairnessFloor?: number | null;
+  },
+) {
+  const { team } = await requireTeam();
+  await assertGameOwned(id, team.id);
+  const game = await prisma.game.update({ where: { id }, data });
+  revalidatePath(`/tournaments/${tournamentId}/games/${id}`);
+  revalidatePath(`/tournaments/${tournamentId}/games/${id}/play`);
+  return game;
+}
+
 export async function deleteGame(id: string, tournamentId: string) {
   const { team } = await requireTeam();
   await assertGameOwned(id, team.id);

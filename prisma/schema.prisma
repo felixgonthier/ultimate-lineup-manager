@@ -22,6 +22,56 @@ enum UserType {
   ADMIN
 }
 
+enum GameDifficulty {
+  EASY
+  EVEN
+  TOUGH
+  OUT_OF_REACH
+}
+
+/// How a game allocates playing time. FAIR reproduces equal-playing-time
+/// behaviour exactly; RESULTS spends minutes where they buy the most wins.
+enum LineupMode {
+  FAIR
+  BALANCED
+  RESULTS
+}
+
+enum PlayerPool {
+  O
+  D
+  BOTH
+}
+
+/// Usage priority within a pool. Orthogonal to PlayerVariance.
+enum PlayerTier {
+  STAR
+  CORE
+  DEPTH
+}
+
+/// Risk profile. Low-variance players protect O drives; high-variance players
+/// generate the breaks that win games on D.
+enum PlayerVariance {
+  LOW
+  HIGH
+}
+
+enum WindStrength {
+  NONE
+  MODERATE
+  STRONG
+}
+
+/// D-line aggression ladder, rest → all-in.
+enum LineRung {
+  DEPTH
+  ROTATION
+  STARTING
+  HALF_PUSH
+  FULL_PUSH
+}
+
 model User {
   id           String   @id @default(cuid())
   username     String   @unique
@@ -43,30 +93,35 @@ model Team {
 }
 
 model Player {
-  id           String        @id @default(cuid())
+  id           String         @id @default(cuid())
   teamId       String
   name         String
   number       Int?
-  role         PlayerRole    @default(CUTTER)
-  active       Boolean       @default(true)
-  createdAt    DateTime      @default(now())
-  team         Team          @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  role         PlayerRole     @default(CUTTER)
+  pool         PlayerPool     @default(BOTH)
+  tier         PlayerTier     @default(CORE)
+  variance     PlayerVariance @default(LOW)
+  active       Boolean        @default(true)
+  createdAt    DateTime       @default(now())
+  team         Team           @relation(fields: [teamId], references: [id], onDelete: Cascade)
   lineAssigns  LinePlayer[]
   pointPlayers PointPlayer[]
-  assistPoints Point[]       @relation("AssistPlayer")
-  goalPoints   Point[]       @relation("GoalPlayer")
+  assistPoints Point[]        @relation("AssistPlayer")
+  goalPoints   Point[]        @relation("GoalPlayer")
 }
 
 model Tournament {
-  id        String   @id @default(cuid())
-  teamId    String
-  name      String
-  location  String?
-  date      DateTime
-  createdAt DateTime @default(now())
-  team      Team     @relation(fields: [teamId], references: [id], onDelete: Cascade)
-  lines     Line[]
-  games     Game[]
+  id         String     @id @default(cuid())
+  teamId     String
+  name       String
+  location   String?
+  date       DateTime
+  /// Default mode for this tournament's games; each game may override it.
+  lineupMode LineupMode @default(BALANCED)
+  createdAt  DateTime   @default(now())
+  team       Team       @relation(fields: [teamId], references: [id], onDelete: Cascade)
+  lines      Line[]
+  games      Game[]
 }
 
 model Line {
@@ -89,34 +144,50 @@ model LinePlayer {
 }
 
 model Game {
-  id           String     @id @default(cuid())
-  tournamentId String
-  opponentName String
-  scoreUs      Int        @default(0)
-  scoreThem    Int        @default(0)
-  createdAt    DateTime   @default(now())
-  tournament   Tournament @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
-  points       Point[]
+  id                   String          @id @default(cuid())
+  tournamentId         String
+  opponentName         String
+  scoreUs              Int             @default(0)
+  scoreThem            Int             @default(0)
+  difficulty           GameDifficulty?
+  excludeFromStats     Boolean         @default(false)
+  /// null = inherit Tournament.lineupMode.
+  lineupMode           LineupMode?
+  windStrength         WindStrength    @default(NONE)
+  /// Which end we attack on point 1. Direction then flips every point, so the
+  /// per-point value is derived rather than entered. null = wind irrelevant.
+  startAttackingUpwind Boolean?
+  /// Minimum points per available player in this game. null = no floor.
+  fairnessFloor        Int?
+  createdAt            DateTime        @default(now())
+  tournament           Tournament      @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
+  points               Point[]
 }
 
 model Point {
-  id             String        @id @default(cuid())
-  gameId         String
-  pointNumber    Int
-  ourOffense     Boolean       @default(true)
-  scoredByUs     Boolean?
-  assistPlayerId String?
-  goalPlayerId   String?
-  createdAt      DateTime      @default(now())
-  game           Game          @relation(fields: [gameId], references: [id], onDelete: Cascade)
-  assistPlayer   Player?       @relation("AssistPlayer", fields: [assistPlayerId], references: [id])
-  goalPlayer     Player?       @relation("GoalPlayer", fields: [goalPlayerId], references: [id])
-  players        PointPlayer[]
+  id              String        @id @default(cuid())
+  gameId          String
+  pointNumber     Int
+  ourOffense      Boolean       @default(true)
+  /// Recorded so stats can split holds/breaks by wind direction.
+  attackingUpwind Boolean?
+  /// Which rung of the aggression ladder was called for this point.
+  rung            LineRung?
+  scoredByUs      Boolean?
+  callahan        Boolean       @default(false)
+  assistPlayerId  String?
+  goalPlayerId    String?
+  createdAt       DateTime      @default(now())
+  game            Game          @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  assistPlayer    Player?       @relation("AssistPlayer", fields: [assistPlayerId], references: [id])
+  goalPlayer      Player?       @relation("GoalPlayer", fields: [goalPlayerId], references: [id])
+  players         PointPlayer[]
 }
 
 model PointPlayer {
   pointId  String
   playerId String
+  blocks   Int    @default(0)
   point    Point  @relation(fields: [pointId], references: [id], onDelete: Cascade)
   player   Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
 

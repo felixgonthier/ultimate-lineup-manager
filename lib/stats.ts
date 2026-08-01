@@ -4,6 +4,8 @@ export type PlayerStats = {
   number: number | null;
   goals: number;
   assists: number;
+  blocks: number;
+  callahans: number;
   pointsPlayed: number;
   oPoints: number;
   dPoints: number;
@@ -22,6 +24,8 @@ function emptyStats(): Omit<PlayerStats, "id" | "name" | "number"> {
   return {
     goals: 0,
     assists: 0,
+    blocks: 0,
+    callahans: 0,
     pointsPlayed: 0,
     oPoints: 0,
     dPoints: 0,
@@ -37,12 +41,25 @@ function emptyStats(): Omit<PlayerStats, "id" | "name" | "number"> {
   };
 }
 
+/**
+ * A callahan is a defensive catch in the scoring endzone — the only way to score
+ * without a thrower, so a goal with no assist is one by definition.
+ */
+export function isCallahanPoint(pt: {
+  scoredByUs?: boolean | null;
+  goalPlayerId?: string | null;
+  assistPlayerId?: string | null;
+}): boolean {
+  return pt.scoredByUs === true && !!pt.goalPlayerId && !pt.assistPlayerId;
+}
+
 export type PointForStats = {
   ourOffense: boolean;
   scoredByUs: boolean | null;
+  callahan?: boolean;
   goalPlayerId: string | null;
   assistPlayerId: string | null;
-  players: { playerId: string }[];
+  players: { playerId: string; blocks?: number }[];
 };
 
 export function computePlayerStatsFromPoints(
@@ -58,6 +75,7 @@ export function computePlayerStatsFromPoints(
     for (const pp of pt.players) {
       const s = ensure(pp.playerId);
       s.pointsPlayed++;
+      s.blocks += pp.blocks ?? 0;
       if (pt.ourOffense) {
         s.oPoints++;
         if (scored) s.holds++;
@@ -74,6 +92,7 @@ export function computePlayerStatsFromPoints(
     if (pt.goalPlayerId) {
       const s = ensure(pt.goalPlayerId);
       s.goals++;
+      if (pt.callahan) s.callahans++;
       if (pt.ourOffense) s.oGoals++;
       else s.dGoals++;
     }

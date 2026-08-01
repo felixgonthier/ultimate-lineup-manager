@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { Home, Users, Trophy, LogOut } from "lucide-react";
+import { Home, Users, Trophy, BarChart3, LogOut } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { logout } from "@/lib/auth";
 
@@ -12,13 +12,16 @@ const navItems = [
   { href: "/tournaments", label: "Tournaments", icon: Trophy },
 ];
 
-export function Nav() {
+const adminNavItems = [{ href: "/stats", label: "Stats", icon: BarChart3 }];
+
+export function Nav({ isAdmin = false }: { isAdmin?: boolean }) {
   const pathname = usePathname();
+  const items = isAdmin ? [...navItems, ...adminNavItems] : navItems;
 
   return (
     <nav className="fixed bottom-0 left-0 right-0 z-50 bg-background border-t border-border safe-area-bottom">
       <div className="flex items-center justify-around max-w-lg mx-auto">
-        {navItems.map(({ href, label, icon: Icon }) => {
+        {items.map(({ href, label, icon: Icon }: (typeof items)[number]) => {
           const active =
             pathname === href || (href !== "/" && pathname.startsWith(href));
           return (
@@ -26,7 +29,7 @@ export function Nav() {
               key={href}
               href={href}
               className={cn(
-                "flex flex-col items-center gap-0.5 px-4 py-3 text-xs font-medium transition-colors min-w-0",
+                "flex flex-col items-center gap-0.5 px-3 py-3 text-xs font-medium transition-colors min-w-0",
                 active ? "text-primary" : "text-muted-foreground",
               )}
             >
@@ -38,7 +41,7 @@ export function Nav() {
         <form action={logout}>
           <button
             type="submit"
-            className="flex flex-col items-center gap-0.5 px-4 py-3 text-xs font-medium text-muted-foreground transition-colors"
+            className="flex flex-col items-center gap-0.5 px-3 py-3 text-xs font-medium text-muted-foreground transition-colors"
           >
             <LogOut className="h-5 w-5" />
             <span>Logout</span>
