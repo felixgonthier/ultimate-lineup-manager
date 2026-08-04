@@ -223,10 +223,30 @@ describe("fatigue", () => {
     ),
   ];
 
-  it("benches a gassed star on a normal point", () => {
+  it("plays a gassed star on a results-mode starting call", () => {
     const { playerIds } = suggestLine({
       candidates: roster,
       mode: "RESULTS",
+      situation: CALM,
+      rung: "STARTING",
+    });
+    assert.ok(playerIds.includes("star"));
+  });
+
+  it("still benches a gassed star on a rest rung", () => {
+    const { playerIds } = suggestLine({
+      candidates: roster,
+      mode: "RESULTS",
+      situation: CALM,
+      rung: "ROTATION",
+    });
+    assert.ok(!playerIds.includes("star"));
+  });
+
+  it("benches a gassed star on a balanced starting call", () => {
+    const { playerIds } = suggestLine({
+      candidates: roster,
+      mode: "BALANCED",
       situation: CALM,
       rung: "STARTING",
     });
@@ -257,31 +277,129 @@ describe("fatigue", () => {
   });
 });
 
+describe("star guarantee on a results starting call", () => {
+  // Three star cutters who are wrong-pool, high-variance and heavily played —
+  // every non-skill term in the score is against them.
+  const roster: Candidate[] = [
+    ...Array.from({ length: 3 }, (_: unknown, i: number) =>
+      player(`star${i}`, {
+        tier: "STAR",
+        pool: "D",
+        variance: "HIGH",
+        gamePoints: 12,
+        tournamentPoints: 55,
+        streak: 2,
+      }),
+    ),
+    ...Array.from({ length: 4 }, (_: unknown, i: number) =>
+      player(`c${i}`, { tier: "CORE", pool: "O" }),
+    ),
+    ...Array.from({ length: 4 }, (_: unknown, i: number) =>
+      player(`h${i}`, { role: "HANDLER", tier: "CORE", pool: "O" }),
+    ),
+  ];
+
+  const onOffense: Situation = {
+    ourOffense: true,
+    attackingUpwind: null,
+    windStrength: "NONE",
+  };
+
+  it("fields every star regardless of fatigue, fairness and fit", () => {
+    const { playerIds } = suggestLine({
+      candidates: roster,
+      mode: "RESULTS",
+      situation: onOffense,
+      rung: "STARTING",
+    });
+    for (const id of ["star0", "star1", "star2"]) {
+      assert.ok(playerIds.includes(id), `expected ${id} on the line`);
+    }
+  });
+
+  it("outranks the fairness floor", () => {
+    const { playerIds } = suggestLine({
+      candidates: roster,
+      mode: "RESULTS",
+      situation: onOffense,
+      rung: "STARTING",
+      fairnessFloor: 5,
+    });
+    for (const id of ["star0", "star1", "star2"]) {
+      assert.ok(playerIds.includes(id), `expected ${id} on the line`);
+    }
+  });
+
+  it("keeps the role floor when the stars are all cutters", () => {
+    const { playerIds } = suggestLine({
+      candidates: [
+        ...Array.from({ length: 7 }, (_: unknown, i: number) =>
+          player(`star${i}`, { tier: "STAR" }),
+        ),
+        ...Array.from({ length: 3 }, (_: unknown, i: number) =>
+          player(`h${i}`, { role: "HANDLER", tier: "DEPTH" }),
+        ),
+      ],
+      mode: "RESULTS",
+      situation: onOffense,
+      rung: "STARTING",
+    });
+    const handlers = playerIds.filter((id: string) => id.startsWith("h"));
+    assert.equal(handlers.length, 3);
+    assert.equal(playerIds.length, 7);
+  });
+
+  it("does not apply on a balanced starting call", () => {
+    const { playerIds } = suggestLine({
+      candidates: roster,
+      mode: "BALANCED",
+      situation: onOffense,
+      rung: "STARTING",
+    });
+    assert.ok(!playerIds.includes("star0"));
+  });
+});
+
 describe("fairness floor", () => {
+  const roster: Candidate[] = [
+    player("bench0", { tier: "DEPTH", pool: "D", variance: "HIGH" }),
+    player("bench1", { tier: "DEPTH", pool: "D", variance: "HIGH" }),
+    ...Array.from({ length: 4 }, (_: unknown, i: number) =>
+      player(`s${i}`, { tier: "STAR", pool: "O", gamePoints: 10 }),
+    ),
+    ...Array.from({ length: 3 }, (_: unknown, i: number) =>
+      player(`h${i}`, {
+        role: "HANDLER",
+        tier: "STAR",
+        pool: "O",
+        gamePoints: 10,
+      }),
+    ),
+  ];
+
   it("forces under-played players onto the field even in RESULTS mode", () => {
-    const roster: Candidate[] = [
-      player("bench0", { tier: "DEPTH", pool: "D", variance: "HIGH" }),
-      player("bench1", { tier: "DEPTH", pool: "D", variance: "HIGH" }),
-      ...Array.from({ length: 4 }, (_: unknown, i: number) =>
-        player(`s${i}`, { tier: "STAR", pool: "O", gamePoints: 10 }),
-      ),
-      ...Array.from({ length: 3 }, (_: unknown, i: number) =>
-        player(`h${i}`, {
-          role: "HANDLER",
-          tier: "STAR",
-          pool: "O",
-          gamePoints: 10,
-        }),
-      ),
-    ];
     const { playerIds } = suggestLine({
       candidates: roster,
       mode: "RESULTS",
       situation: CALM,
+      rung: "ROTATION",
       fairnessFloor: 2,
     });
     assert.ok(playerIds.includes("bench0"));
     assert.ok(playerIds.includes("bench1"));
+  });
+
+  it("yields to the star guarantee on a results starting call", () => {
+    const { playerIds } = suggestLine({
+      candidates: roster,
+      mode: "RESULTS",
+      situation: CALM,
+      rung: "STARTING",
+      fairnessFloor: 2,
+    });
+    // Seven stars means seven slots — the floor only ever fills what they leave.
+    assert.ok(!playerIds.includes("bench0"));
+    assert.ok(!playerIds.includes("bench1"));
   });
 });
 
