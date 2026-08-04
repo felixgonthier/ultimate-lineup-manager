@@ -5,6 +5,13 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { recordPoint, deleteLastPoint } from "@/lib/actions/points";
 import { isCallahanPoint } from "@/lib/stats";
+import { explainCandidate, type Reason } from "@/lib/lineup-explain";
+import {
+  ROLE_LABEL,
+  ROLE_SHORT,
+  ROLE_TONE,
+  type Role as PlayerRole,
+} from "@/lib/advanced-stats";
 import {
   clampRung,
   rungLabel,
@@ -30,6 +37,7 @@ import {
 import { cn } from "@/lib/utils";
 import {
   ChevronLeft,
+  ChevronDown,
   RotateCcw,
   Check,
   X,
@@ -42,13 +50,41 @@ import {
   Users,
   Shield,
   Wind,
-  Star,
+  SlidersHorizontal,
 } from "lucide-react";
+
+/** What a player has done in this game — the "right now" read on a name. */
+export type GameImpact = {
+  goals: number;
+  assists: number;
+  blocks: number;
+  /** Offence points on the field, and how many were held. */
+  holds: number;
+  holdOpps: number;
+  /** Defence points on the field, and how many were broken. */
+  breaks: number;
+  breakOpps: number;
+  /** On-field flag for each of the last few points, oldest first. */
+  recent: boolean[];
+};
+
+/** A player's tournament-so-far form — the sample this game is too small to be. */
+export type PlayerForm = {
+  holds: number;
+  holdOpps: number;
+  breaks: number;
+  breakOpps: number;
+  blocks: number;
+  dPoints: number;
+  /** Goals plus assists. A player cannot have both on one point, so this is
+   *  also the count of points they finished. */
+  scores: number;
+  pointsPlayed: number;
+};
 
 type Player = {
   id: string;
   name: string;
-  number: number | null;
   role: string;
   pool: Pool;
   tier: Tier;
@@ -78,16 +114,44 @@ type Game = {
 
 type Step = "select" | "outcome";
 
-const ROLE_SHORT: Record<string, string> = {
-  HANDLER: "H",
-  CUTTER: "C",
-  HYBRID: "Hy",
+const TIER_ABBR: Record<Tier, string> = {
+  STAR: "STAR",
+  CORE: "CORE",
+  DEPTH: "DEPTH",
 };
-const ROLE_COLORS: Record<string, string> = {
-  HANDLER: "bg-blue-100 text-blue-700",
-  CUTTER: "bg-green-100 text-green-700",
-  HYBRID: "bg-purple-100 text-purple-700",
-};
+/**
+ * Tier sits ahead of the name as a quiet chip. The O/D pool is deliberately
+ * absent — it drives the suggester's own ranking, so the pick order already
+ * reflects it.
+ */
+function TierChip({ tier }: { tier: Tier }) {
+  return (
+    <span
+      className="shrink-0 px-[2px] py-[1px] rounded-[2px] border border-foreground/10 bg-foreground/[0.03] text-[7px] font-bold uppercase tracking-wide leading-none text-foreground/45"
+      title={`${tier.charAt(0)}${tier.slice(1).toLowerCase()} tier`}
+    >
+      {TIER_ABBR[tier]}
+    </span>
+  );
+}
+
+/** The role tag the rest of the app uses — same tone, same shape, same letters. */
+function RoleTag({ role, compact }: { role: string; compact?: boolean }) {
+  return (
+    <span
+      className={cn(
+        "shrink-0 rounded font-medium",
+        compact
+          ? "text-[7px] px-1 py-[1px]"
+          : "text-[10px] px-1.5 py-0.5",
+        ROLE_TONE[role as PlayerRole],
+      )}
+      title={ROLE_LABEL[role as PlayerRole]}
+    >
+      {ROLE_SHORT[role as PlayerRole]}
+    </span>
+  );
+}
 
 const MODE_ORDER: LineupMode[] = ["FAIR", "BALANCED", "RESULTS"];
 const MODE_LABELS: Record<LineupMode, string> = {
@@ -95,10 +159,18 @@ const MODE_LABELS: Record<LineupMode, string> = {
   BALANCED: "Balanced",
   RESULTS: "Results",
 };
-const MODE_COLORS: Record<LineupMode, string> = {
-  FAIR: "bg-sky-100 text-sky-700 border-sky-200",
-  BALANCED: "bg-muted text-foreground border-input",
-  RESULTS: "bg-rose-100 text-rose-700 border-rose-200",
+const MODE_HINTS: Record<LineupMode, string> = {
+  FAIR: "Equal minutes — fewest points played go on",
+  BALANCED: "Mixes fairness with the matchup",
+  RESULTS: "Best line for the point, fairness last",
+};
+
+// Reasons read as a quiet caption, not a row of stickers — only the warning
+// tone earns colour.
+const REASON_TONES: Record<Reason["tone"], string> = {
+  good: "text-muted-foreground",
+  fair: "text-muted-foreground",
+  warn: "text-red-500 font-semibold",
 };
 
 const RUNG_ORDER: Rung[] = [
@@ -109,21 +181,188 @@ const RUNG_ORDER: Rung[] = [
   "FULL_PUSH",
 ];
 
+/** On-field flags for the last few points — game fatigue at a glance. */
+function FatigueDots({ recent }: { recent: boolean[] }) {
+  if (recent.length === 0) return null;
+  return (
+    <span
+      className="flex items-center gap-[2px] shrink-0"
+      title={`Last ${recent.length} points — filled means on the field`}
+    >
+      {recent.map((on: boolean, i: number) => (
+        <span
+          key={i}
+          className={cn(
+            "h-2 w-[3px] rounded-full",
+            on ? "bg-foreground/60" : "bg-foreground/15",
+          )}
+        />
+      ))}
+    </span>
+  );
+}
+
+/**
+ * What the team did with this player on the field. Conversion split by O and D
+ * beats a single plus-minus: a handler at 5/5 holding and a defender at 2/3
+ * breaking are both excellent, and one number would hide that.
+ */
+function ImpactStrip({ impact }: { impact: GameImpact | undefined }) {
+  if (!impact) return null;
+  const credits: string[] = [];
+  if (impact.goals > 0) credits.push(`${impact.goals}G`);
+  if (impact.assists > 0) credits.push(`${impact.assists}A`);
+  if (impact.blocks > 0) credits.push(`${impact.blocks}D`);
+  if (impact.holdOpps === 0 && impact.breakOpps === 0 && credits.length === 0) {
+    return null;
+  }
+  return (
+    <span className="flex items-center gap-1.5 shrink-0 tabular-nums">
+      {impact.holdOpps > 0 && (
+        <span
+          className={cn(
+            "font-medium",
+            impact.holds === impact.holdOpps
+              ? "text-emerald-600"
+              : "text-foreground/70",
+          )}
+          title={`Held ${impact.holds} of ${impact.holdOpps} offence points on the field`}
+        >
+          {impact.holds}/{impact.holdOpps}{" "}
+          <span className="font-normal text-muted-foreground">holds</span>
+        </span>
+      )}
+      {impact.breakOpps > 0 && (
+        <span
+          className={cn(
+            "font-medium",
+            impact.breaks > 0 ? "text-emerald-600" : "text-foreground/70",
+          )}
+          title={`Broke ${impact.breaks} of ${impact.breakOpps} defence points on the field`}
+        >
+          {impact.breaks}/{impact.breakOpps}{" "}
+          <span className="font-normal text-muted-foreground">breaks</span>
+        </span>
+      )}
+      {credits.length > 0 && (
+        <span className="font-medium text-foreground/70">
+          {credits.join(" ")}
+        </span>
+      )}
+    </span>
+  );
+}
+
+function pct(n: number, d: number): string {
+  return `${Math.round((n / d) * 100)}%`;
+}
+
+/**
+ * The day's numbers. Rates rather than counts, because the point of this line is
+ * comparing two names against each other, and raw totals just rank whoever has
+ * played most. Anything without a denominator is left out rather than shown as
+ * a zero — no opportunities is not the same as failed opportunities.
+ */
+function FormStrip({ form }: { form: PlayerForm | undefined }) {
+  if (!form || form.pointsPlayed === 0) return null;
+  const items: { key: string; value: string; label: string; title: string }[] =
+    [];
+
+  if (form.holdOpps > 0) {
+    items.push({
+      key: "hold",
+      value: pct(form.holds, form.holdOpps),
+      label: "hold",
+      title: `Held ${form.holds} of ${form.holdOpps} offence points this tournament`,
+    });
+  }
+  if (form.breakOpps > 0) {
+    items.push({
+      key: "break",
+      value: pct(form.breaks, form.breakOpps),
+      label: "break",
+      title: `Broke ${form.breaks} of ${form.breakOpps} defence points this tournament`,
+    });
+  }
+  if (form.dPoints > 0) {
+    items.push({
+      key: "blocks",
+      value: (form.blocks / form.dPoints).toFixed(1),
+      label: "D/pt",
+      title: `${form.blocks} block${form.blocks === 1 ? "" : "s"} over ${form.dPoints} defence points — defensive work rate`,
+    });
+  }
+  items.push({
+    key: "scores",
+    value: pct(form.scores, form.pointsPlayed),
+    label: "scored",
+    title: `Threw or caught the goal on ${form.scores} of the ${form.pointsPlayed} points they played`,
+  });
+
+  return (
+    <span className="flex items-center gap-1.5 shrink-0 tabular-nums">
+      <span className="text-[9px] uppercase tracking-wider text-foreground/30">
+        day
+      </span>
+      {items.map((it: (typeof items)[number]) => (
+        <span key={it.key} title={it.title} className="text-foreground/60">
+          {it.value}{" "}
+          <span className="font-normal text-muted-foreground">{it.label}</span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function ReasonChips({ reasons }: { reasons: Reason[] }) {
+  if (reasons.length === 0) return null;
+  return (
+    <span className="flex items-center gap-1 min-w-0 truncate">
+      {reasons.map((r: Reason, i: number) => (
+        <span key={r.label} className="flex items-center gap-1 shrink-0">
+          {i > 0 && <span className="text-foreground/20">·</span>}
+          <span title={r.detail} className={cn("whitespace-nowrap", REASON_TONES[r.tone])}>
+            {r.label}
+          </span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
 export function PlayView({
   game,
   players,
   lines,
   nextPointNumber,
+  gamePointTotal,
+  tournamentPointTotal,
   hotPlayerIds,
   consecutiveCounts,
+  impacts,
+  breaks,
+  forms,
+  run,
   ratings,
 }: {
   game: Game;
   players: Player[];
   lines: Line[];
   nextPointNumber: number;
+  /** Points played so far this game — the denominator for a player's share. */
+  gamePointTotal: number;
+  /** Points played so far this tournament. */
+  tournamentPointTotal: number;
   hotPlayerIds: string[];
   consecutiveCounts: Record<string, number>;
+  /** Per-player game contribution, keyed by player id. */
+  impacts: Record<string, GameImpact>;
+  /** Breaks converted and conceded this game. */
+  breaks: { us: number; them: number };
+  /** Tournament-so-far form, keyed by player id. */
+  forms: Record<string, PlayerForm>;
+  /** Current unanswered run of scores, or null at 0–0. */
+  run: { count: number; byUs: boolean } | null;
   /** Measured hold/break ratings by player id. Empty until there are rated games. */
   ratings: Record<string, CandidateRatings>;
 }) {
@@ -148,6 +387,10 @@ export function PlayView({
     Record<string, string[]>
   >({});
   const [manageOpen, setManageOpen] = useState(false);
+  // Mode, wind and the aggression ladder live behind one collapsed strip: all
+  // three are set once and rarely touched, but their current values still have
+  // to be readable without opening anything.
+  const [settingsOpen, setSettingsOpen] = useState(false);
   // Mode can be flipped mid-game (a blowout in pool play becomes a chance to
   // give minutes away). Starts from the game's resolved mode.
   const [mode, setMode] = useState<LineupMode>(game.lineupMode);
@@ -242,39 +485,73 @@ export function PlayView({
 
   const hasRatings = Object.keys(ratings).length > 0;
 
+  const candidates = visiblePlayers.map(
+    (p: Player): Candidate => ({
+      id: p.id,
+      role: p.role as Role,
+      pool: p.pool,
+      tier: p.tier,
+      variance: p.variance,
+      ratings: ratings[p.id],
+      gamePoints: p.pointCount,
+      tournamentPoints: p.tournamentPointCount,
+      streak: consecutiveCounts[p.id] ?? 0,
+    }),
+  );
+
   // Derived every render rather than memoised: it depends on injuries, line
   // overrides, mode, rung and wind, and a stale memo here used to recommend
   // injured players.
   const suggestion = suggestLine({
-    candidates: visiblePlayers.map(
-      (p: Player): Candidate => ({
-        id: p.id,
-        role: p.role as Role,
-        pool: p.pool,
-        tier: p.tier,
-        variance: p.variance,
-        ratings: ratings[p.id],
-        gamePoints: p.pointCount,
-        tournamentPoints: p.tournamentPointCount,
-        streak: consecutiveCounts[p.id] ?? 0,
-      }),
-    ),
+    candidates,
     mode,
     situation,
     rung: rungOverride ?? undefined,
     fairnessFloor: game.fairnessFloor ?? undefined,
   });
   const recommendedIds = new Set<string>(suggestion.playerIds);
+  const rankById = new Map<string, number>(
+    suggestion.playerIds.map((id: string, i: number) => [id, i + 1]),
+  );
+
+  const gamePointsPool = candidates.map((c: Candidate) => c.gamePoints);
+  const minGamePoints = Math.min(...gamePointsPool, Infinity);
+  const maxGamePoints = Math.max(...gamePointsPool, 0);
+  const reasonsById = new Map<string, Reason[]>(
+    candidates.map((c: Candidate) => [
+      c.id,
+      explainCandidate({
+        candidate: c,
+        mode,
+        rung: suggestion.rung,
+        situation,
+        metric: suggestion.metric,
+        fairnessFloor: game.fairnessFloor ?? undefined,
+        minGamePoints,
+        maxGamePoints,
+      }),
+    ]),
+  );
 
   // Fair mode keeps the familiar fewest-points ordering; the other modes lead
-  // with whoever the suggester rates highest for this point.
-  const displayPlayers =
+  // with whoever the suggester rates highest. Either way the suggested seven
+  // float to the top in pick order, so "who does it want?" needs no tap.
+  const restOrder =
     mode === "FAIR"
       ? visiblePlayers
       : [...visiblePlayers].sort(
           (a: Player, b: Player) =>
             suggestion.scores[b.id] - suggestion.scores[a.id],
         );
+  const displayPlayers = [
+    ...restOrder
+      .filter((p: Player) => recommendedIds.has(p.id))
+      .sort(
+        (a: Player, b: Player) =>
+          (rankById.get(a.id) ?? 0) - (rankById.get(b.id) ?? 0),
+      ),
+    ...restOrder.filter((p: Player) => !recommendedIds.has(p.id)),
+  ];
 
   const availableRungs = RUNG_ORDER.filter(
     (r: Rung) => clampRung(mode, r) === r,
@@ -359,6 +636,24 @@ export function PlayView({
     .filter((p) => !selectedIds.has(p.id) && !injuredIds.has(p.id))
     .sort((a, b) => a.pointCount - b.pointCount);
 
+  const windLabel =
+    attackingUpwind === null ? null : attackingUpwind ? "Upwind" : "Downwind";
+  // The number that actually says who is winning the game: holds are expected,
+  // breaks are what move the scoreboard.
+  const breakDiff = breaks.us - breaks.them;
+  // One line of context that answers "what is this point?" without a tap.
+  const pointContext = [
+    `Pt ${nextPointNumber}`,
+    ourOffense ? "Offense" : "Defense",
+    windLabel,
+    breakDiff === 0
+      ? "on serve"
+      : `${breakDiff > 0 ? "+" : ""}${breakDiff} break${Math.abs(breakDiff) === 1 ? "" : "s"}`,
+    run ? `${run.count} straight ${run.byUs ? "for us" : "against"}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+
   return (
     <>
       {step === "outcome" ? (
@@ -395,6 +690,9 @@ export function PlayView({
                 <p className="text-sm text-muted-foreground mt-2">
                   vs {game.opponentName}
                 </p>
+                <p className="text-[11px] text-muted-foreground mt-0.5 tabular-nums">
+                  {pointContext}
+                </p>
               </div>
             </div>
 
@@ -414,24 +712,23 @@ export function PlayView({
                         isSubbingOut && "bg-amber-50",
                       )}
                     >
-                      {p.number != null && (
-                        <span className="text-xs font-mono text-muted-foreground w-6 shrink-0 text-right">
-                          {p.number}
-                        </span>
-                      )}
                       <span className="flex-1 text-sm font-medium truncate">
                         {p.name}
                       </span>
+                      <RoleTag role={p.role} />
                       <span
-                        className={cn(
-                          "text-[10px] px-1.5 py-0.5 rounded font-semibold shrink-0",
-                          ROLE_COLORS[p.role],
-                        )}
+                        className="tabular-nums shrink-0 w-14 text-right leading-none"
+                        title={`${p.pointCount} of ${gamePointTotal} points this game · ${p.tournamentPointCount} of ${tournamentPointTotal} this tournament`}
                       >
-                        {ROLE_SHORT[p.role]}
-                      </span>
-                      <span className="text-xs text-muted-foreground tabular-nums shrink-0 w-10 text-right">
-                        {p.pointCount}pt{p.pointCount !== 1 ? "s" : ""}
+                        <span className="block text-xs font-semibold">
+                          {p.pointCount}
+                          <span className="text-muted-foreground font-normal">
+                            /{gamePointTotal}
+                          </span>
+                        </span>
+                        <span className="block text-[10px] text-muted-foreground mt-0.5">
+                          {p.tournamentPointCount}/{tournamentPointTotal}
+                        </span>
                       </span>
                       <button
                         onClick={() =>
@@ -471,24 +768,21 @@ export function PlayView({
                         onClick={() => completeSub(subbingOutId, p.id)}
                         className="w-full flex items-center gap-2 px-3 py-2 bg-card hover:bg-accent text-left transition-colors"
                       >
-                        {p.number != null && (
-                          <span className="text-xs font-mono text-muted-foreground w-6 shrink-0 text-right">
-                            {p.number}
-                          </span>
-                        )}
                         <span className="flex-1 text-sm font-medium truncate">
                           {p.name}
                         </span>
+                        <FatigueDots recent={impacts[p.id]?.recent ?? []} />
+                        <RoleTag role={p.role} />
                         <span
-                          className={cn(
-                            "text-[10px] px-1.5 py-0.5 rounded font-semibold shrink-0",
-                            ROLE_COLORS[p.role],
-                          )}
+                          className="tabular-nums shrink-0 w-14 text-right leading-none"
+                          title={`${p.pointCount} of ${gamePointTotal} points this game · ${p.tournamentPointCount} of ${tournamentPointTotal} this tournament`}
                         >
-                          {ROLE_SHORT[p.role]}
-                        </span>
-                        <span className="text-xs text-muted-foreground tabular-nums shrink-0 w-10 text-right">
-                          {p.pointCount}pt{p.pointCount !== 1 ? "s" : ""}
+                          <span className="block text-xs font-semibold">
+                            {p.pointCount}
+                          </span>
+                          <span className="block text-[10px] text-muted-foreground mt-0.5">
+                            {p.tournamentPointCount}
+                          </span>
                         </span>
                       </button>
                     ))}
@@ -645,11 +939,11 @@ export function PlayView({
       ) : (
         /* Step: select players */
         <div className="fixed inset-0 z-[51] flex flex-col bg-background">
-          {/* Header */}
+          {/* Header — two fixed rows, one collapsed settings strip, one line row */}
           <div className="w-full border-b bg-background">
-            <div className="max-w-lg mx-auto px-4 pt-3 pb-2 space-y-2">
-              {/* Row 1: back · score · manage · undo */}
-              <div className="flex items-center justify-between">
+            <div className="max-w-lg mx-auto px-4 pt-2 pb-2 space-y-2">
+              {/* Row 1: back · score + point context · roster · undo */}
+              <div className="flex items-center justify-between gap-2">
                 <Link
                   href={`/tournaments/${game.tournamentId}/games/${game.id}`}
                 >
@@ -661,24 +955,29 @@ export function PlayView({
                     <ChevronLeft className="h-5 w-5" />
                   </Button>
                 </Link>
-                <p className="text-2xl font-black tracking-tight tabular-nums leading-none">
-                  {game.scoreUs}
-                  <span className="text-muted-foreground font-light mx-1.5">
-                    –
-                  </span>
-                  {game.scoreThem}
-                </p>
-                <div className="flex items-center gap-0.5">
+                <div className="min-w-0 text-center">
+                  <p className="text-2xl font-black tracking-tight tabular-nums leading-none">
+                    {game.scoreUs}
+                    <span className="text-muted-foreground font-light mx-1.5">
+                      –
+                    </span>
+                    {game.scoreThem}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground truncate leading-tight mt-0.5">
+                    vs {game.opponentName}
+                  </p>
+                </div>
+                <div className="flex items-center gap-0.5 shrink-0">
                   <button
                     onClick={() => setManageOpen(true)}
-                    className="text-muted-foreground p-1"
+                    className="text-muted-foreground p-1.5"
                     title="Manage roster"
                   >
                     <Users className="h-4 w-4" />
                   </button>
                   <button
                     onClick={handleUndo}
-                    className="text-muted-foreground p-1"
+                    className="text-muted-foreground p-1.5"
                     title="Undo last point"
                   >
                     <RotateCcw className="h-4 w-4" />
@@ -686,30 +985,43 @@ export function PlayView({
                 </div>
               </div>
 
-              {/* Row 2: opponent · mode · O/D toggle */}
-              <div className="flex items-center justify-between gap-2 px-1">
-                <div className="flex items-center gap-1.5 min-w-0">
-                  <span className="text-sm font-medium text-muted-foreground truncate">
-                    vs {game.opponentName}
-                  </span>
-                  <button
-                    onClick={() =>
-                      setMode(
-                        MODE_ORDER[
-                          (MODE_ORDER.indexOf(mode) + 1) % MODE_ORDER.length
-                        ],
-                      )
-                    }
+              {/* Row 2: point context · O/D toggle */}
+              <div className="flex items-center justify-between gap-2">
+                <p className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground tabular-nums truncate">
+                  <span>Pt {nextPointNumber}</span>
+                  <span className="text-foreground/20">·</span>
+                  <span
                     className={cn(
-                      "px-2 py-0.5 rounded-full text-[10px] font-bold uppercase tracking-wide border shrink-0 transition-colors",
-                      MODE_COLORS[mode],
+                      "font-bold",
+                      breakDiff > 0
+                        ? "text-emerald-600"
+                        : breakDiff < 0
+                          ? "text-red-500"
+                          : "text-muted-foreground",
                     )}
-                    title="Playing-time mode — tap to change"
+                    title={`${breaks.us} break${breaks.us === 1 ? "" : "s"} converted, ${breaks.them} conceded`}
                   >
-                    {MODE_LABELS[mode]}
-                  </button>
-                </div>
-                <div className="flex items-center bg-muted rounded-full p-0.5">
+                    {breakDiff > 0
+                      ? `+${breakDiff} break${breakDiff === 1 ? "" : "s"}`
+                      : breakDiff < 0
+                        ? `${breakDiff} break${breakDiff === -1 ? "" : "s"}`
+                        : "on serve"}
+                  </span>
+                  {run && (
+                    <>
+                      <span className="text-foreground/20">·</span>
+                      <span
+                        className={cn(
+                          "font-bold",
+                          run.byUs ? "text-emerald-600" : "text-red-500",
+                        )}
+                      >
+                        {run.count} straight {run.byUs ? "for us" : "against"}
+                      </span>
+                    </>
+                  )}
+                </p>
+                <div className="flex items-center bg-muted rounded-full p-0.5 shrink-0">
                   <button
                     onClick={() => setOurOffense(true)}
                     className={cn(
@@ -735,70 +1047,128 @@ export function PlayView({
                 </div>
               </div>
 
-              {/* Row 2b: wind direction · aggression ladder (never in fair mode) */}
-              {(attackingUpwind !== null || mode !== "FAIR") && (
-                <div className="flex items-center gap-1.5 overflow-x-auto px-1 pb-0.5">
-                  {attackingUpwind !== null && (
-                    <button
-                      onClick={() => setAttackingUpwind(!attackingUpwind)}
-                      className={cn(
-                        "flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-semibold border whitespace-nowrap shrink-0 transition-colors",
-                        attackingUpwind
-                          ? "border-orange-300 bg-orange-50 text-orange-700"
-                          : "border-emerald-300 bg-emerald-50 text-emerald-700",
-                      )}
-                      title="Flips automatically each point — tap to correct"
-                    >
-                      <Wind className="h-3 w-3 shrink-0" />
-                      {attackingUpwind ? "Upwind" : "Downwind"}
-                    </button>
-                  )}
-                  {mode !== "FAIR" && (
-                    <>
-                      <button
-                        onClick={() => setRungOverride(null)}
-                        className={cn(
-                          "px-2 py-1 rounded-full text-[11px] font-medium border whitespace-nowrap shrink-0 transition-colors",
-                          rungOverride === null
-                            ? "bg-primary text-primary-foreground border-primary"
-                            : "border-input hover:bg-accent",
-                        )}
-                      >
-                        Auto · {rungLabel(suggestion.rung, situation)}
-                      </button>
-                      {availableRungs.map((r: Rung) => (
+              {/* Row 3: the one settings strip — mode, wind, aggression ladder */}
+              <div className="rounded-xl border bg-card">
+                <button
+                  onClick={() => setSettingsOpen((v) => !v)}
+                  className="w-full flex items-center gap-2 px-2.5 py-1.5 text-left"
+                >
+                  <SlidersHorizontal className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                  <span className="flex-1 min-w-0 text-[11px] font-semibold truncate">
+                    {MODE_LABELS[mode]}
+                    {windLabel && (
+                      <span className="text-muted-foreground font-medium">
+                        {" · "}
+                        {windLabel}
+                      </span>
+                    )}
+                    {mode !== "FAIR" && (
+                      <span className="text-muted-foreground font-medium">
+                        {" · "}
+                        {rungLabel(suggestion.rung, situation)}
+                        {rungOverride === null ? "" : " (set)"}
+                      </span>
+                    )}
+                  </span>
+                  <ChevronDown
+                    className={cn(
+                      "h-3.5 w-3.5 text-muted-foreground shrink-0 transition-transform",
+                      settingsOpen && "rotate-180",
+                    )}
+                  />
+                </button>
+
+                {settingsOpen && (
+                  <div className="px-2.5 pb-2.5 pt-0.5 space-y-2 border-t">
+                    {/* Mode */}
+                    <div className="flex items-center gap-1 pt-2">
+                      {MODE_ORDER.map((m: LineupMode) => (
                         <button
-                          key={r}
-                          onClick={() =>
-                            setRungOverride(rungOverride === r ? null : r)
-                          }
+                          key={m}
+                          onClick={() => {
+                            setMode(m);
+                            setRungOverride(null);
+                          }}
                           className={cn(
-                            "px-2 py-1 rounded-full text-[11px] font-medium border whitespace-nowrap shrink-0 transition-colors",
-                            rungOverride === r
-                              ? "bg-rose-500 text-white border-rose-500"
+                            "flex-1 py-1 rounded-lg text-[11px] font-bold border transition-colors",
+                            mode === m
+                              ? "bg-primary text-primary-foreground border-primary"
                               : "border-input hover:bg-accent",
                           )}
                         >
-                          {rungLabel(r, situation)}
+                          {MODE_LABELS[m]}
                         </button>
                       ))}
-                    </>
-                  )}
-                </div>
-              )}
+                    </div>
+                    <p className="text-[10px] text-muted-foreground">
+                      {MODE_HINTS[mode]}
+                    </p>
 
-              {/* Says plainly whether measured rates are behind the call */}
-              {suggestion.metric && (
-                <p className="px-1 text-[10px] text-muted-foreground">
-                  {hasRatings
-                    ? `Team's best ${suggestion.metric} converters first`
-                    : "No rated games yet — ranking on assigned tiers"}
-                </p>
-              )}
+                    {/* Wind */}
+                    {attackingUpwind !== null && (
+                      <button
+                        onClick={() => setAttackingUpwind(!attackingUpwind)}
+                        className={cn(
+                          "flex items-center gap-1 px-2 py-1 rounded-full text-[11px] font-semibold border transition-colors",
+                          attackingUpwind
+                            ? "border-orange-300 bg-orange-50 text-orange-700"
+                            : "border-emerald-300 bg-emerald-50 text-emerald-700",
+                        )}
+                        title="Flips automatically each point — tap to correct"
+                      >
+                        <Wind className="h-3 w-3 shrink-0" />
+                        Attacking {attackingUpwind ? "upwind" : "downwind"}
+                      </button>
+                    )}
 
-              {/* Row 3: all line filters in one scrollable row */}
+                    {/* Aggression ladder */}
+                    {mode !== "FAIR" && (
+                      <div className="flex gap-1.5 overflow-x-auto pb-0.5">
+                        <button
+                          onClick={() => setRungOverride(null)}
+                          className={cn(
+                            "px-2 py-1 rounded-full text-[11px] font-medium border whitespace-nowrap shrink-0 transition-colors",
+                            rungOverride === null
+                              ? "bg-primary text-primary-foreground border-primary"
+                              : "border-input hover:bg-accent",
+                          )}
+                        >
+                          Auto · {rungLabel(suggestion.rung, situation)}
+                        </button>
+                        {availableRungs.map((r: Rung) => (
+                          <button
+                            key={r}
+                            onClick={() =>
+                              setRungOverride(rungOverride === r ? null : r)
+                            }
+                            className={cn(
+                              "px-2 py-1 rounded-full text-[11px] font-medium border whitespace-nowrap shrink-0 transition-colors",
+                              rungOverride === r
+                                ? "bg-rose-500 text-white border-rose-500"
+                                : "border-input hover:bg-accent",
+                            )}
+                          >
+                            {rungLabel(r, situation)}
+                          </button>
+                        ))}
+                      </div>
+                    )}
+
+                    {/* Says plainly whether measured rates are behind the call */}
+                    {suggestion.metric && (
+                      <p className="text-[10px] text-muted-foreground">
+                        {hasRatings
+                          ? `Team's best ${suggestion.metric} converters first`
+                          : "No rated games yet — ranking on assigned tiers"}
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* Row 4: line filters — only when there is a choice to make */}
               {lines.length > 0 && (
-                <div className="flex gap-1.5 overflow-x-auto pb-0.5 mt-1">
+                <div className="flex gap-1.5 overflow-x-auto pb-0.5">
                   <button
                     onClick={() => setSelectedLine(null)}
                     className={cn(
@@ -859,98 +1229,119 @@ export function PlayView({
 
           {/* Scrollable player list */}
           <div className="flex-1 overflow-y-auto">
-            <div className="max-w-lg mx-auto px-4 py-2 space-y-1.5">
+            <div className="max-w-lg mx-auto px-4 py-2 space-y-1">
               {displayPlayers.length === 0 && (
                 <p className="text-sm text-muted-foreground text-center py-8">
                   No players in this line
                 </p>
               )}
-              {displayPlayers.map((player) => {
+              {displayPlayers.map((player: Player) => {
                 const selected = selectedIds.has(player.id);
                 const isHot = hotSet.has(player.id);
                 const streak = consecutiveCounts[player.id] ?? 0;
+                const rank = rankById.get(player.id);
+                const impact = impacts[player.id];
+                const reasons = (reasonsById.get(player.id) ?? []).slice(0, 2);
 
                 return (
                   <button
                     key={player.id}
                     onClick={() => togglePlayer(player.id)}
                     className={cn(
-                      "w-full flex items-center gap-2.5 px-3 py-2 rounded-xl border-2 text-left transition-all active:scale-98",
+                      "w-full flex items-stretch gap-2.5 px-2.5 py-1 rounded-lg border text-left transition-colors active:scale-[0.995]",
                       selected
-                        ? "border-primary bg-primary/10"
-                        : "border-input bg-card hover:bg-accent",
+                        ? "border-foreground/60 bg-foreground/[0.04]"
+                        : "border-border bg-card hover:bg-accent",
                     )}
                   >
                     {/* Selection indicator */}
-                    <div
+                    <span
                       className={cn(
-                        "h-5 w-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors",
+                        "h-4 w-4 rounded-full border self-center flex items-center justify-center shrink-0 transition-colors",
                         selected
-                          ? "border-primary bg-primary text-primary-foreground"
-                          : "border-muted-foreground",
+                          ? "border-foreground bg-foreground text-background"
+                          : "border-foreground/25",
                       )}
                     >
-                      {selected && <Check className="h-3 w-3" />}
-                    </div>
-
-                    {/* Player info */}
-                    <div className="flex-1 flex items-center gap-1.5 min-w-0">
-                      {player.number != null && (
-                        <span className="text-xs font-mono text-muted-foreground shrink-0">
-                          #{player.number}
-                        </span>
-                      )}
-                      <span className="font-semibold text-sm truncate">
-                        {player.name}
-                      </span>
-                      {mode !== "FAIR" && player.tier === "STAR" && (
-                        <span title="Star" className="shrink-0">
-                          <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
-                        </span>
-                      )}
-                      {mode !== "FAIR" && player.pool !== "BOTH" && (
-                        <span className="text-[10px] font-bold text-muted-foreground shrink-0">
-                          {player.pool}
-                        </span>
-                      )}
-                      <span
-                        className={cn(
-                          "text-xs px-1.5 py-0.5 rounded font-medium shrink-0",
-                          ROLE_COLORS[player.role],
-                        )}
-                      >
-                        {ROLE_SHORT[player.role]}
-                      </span>
-                      {streak >= 2 && (
-                        <span
-                          className="flex items-center gap-0.5 text-red-500 shrink-0"
-                          title={`${streak} consecutive points`}
-                        >
-                          <Timer className="h-3 w-3" />
-                          <span className="text-[10px] font-bold tabular-nums">
-                            {streak}
-                          </span>
-                        </span>
-                      )}
-                      {streak === 1 && (
-                        <span title="Played last point" className="shrink-0">
-                          <Timer className="h-3 w-3 text-amber-400" />
-                        </span>
-                      )}
-                      {isHot && (
-                        <span
-                          className="text-sm leading-none shrink-0"
-                          title="Hot — scored recently"
-                        >
-                          🔥
-                        </span>
-                      )}
-                    </div>
-
-                    {/* Point count */}
-                    <span className="text-xs text-muted-foreground shrink-0">
-                      {player.pointCount}pt{player.pointCount !== 1 ? "s" : ""}
+                      {selected && <Check className="h-2.5 w-2.5" />}
                     </span>
+
+                    <div className="flex-1 min-w-0">
+                      {/* Identity */}
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <span
+                          className={cn(
+                            "text-sm truncate",
+                            rank === undefined
+                              ? "font-medium text-foreground/70"
+                              : "font-semibold",
+                          )}
+                        >
+                          {player.name}
+                        </span>
+                        {streak >= 2 && (
+                          <span
+                            className={cn(
+                              "flex items-center gap-0.5 shrink-0",
+                              streak >= 3
+                                ? "text-red-500"
+                                : "text-muted-foreground",
+                            )}
+                            title={`${streak} consecutive points`}
+                          >
+                            <Timer className="h-2.5 w-2.5" />
+                            <span className="text-[10px] font-semibold tabular-nums">
+                              {streak}
+                            </span>
+                          </span>
+                        )}
+                        {isHot && (
+                          <span
+                            className="text-[11px] leading-none shrink-0"
+                            title="Hot — scored recently"
+                          >
+                            🔥
+                          </span>
+                        )}
+                      </div>
+
+                      {/* This game */}
+                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground overflow-hidden">
+                        <ImpactStrip impact={impact} />
+                        <ReasonChips reasons={reasons} />
+                      </div>
+
+                      {/* The day so far */}
+                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground overflow-hidden">
+                        <FormStrip form={forms[player.id]} />
+                      </div>
+                    </div>
+
+                    {/* Tier and recent load, stacked to match the two text lines */}
+                    <span className="shrink-0 w-16 self-center flex flex-col items-end gap-1">
+                      <span className="flex items-center gap-1">
+                        <TierChip tier={player.tier} />
+                        <RoleTag role={player.role} compact />
+                      </span>
+                      <FatigueDots recent={impact?.recent ?? []} />
+                    </span>
+
+                    {/* Share of play: this game over this tournament */}
+                    <span
+                      className="shrink-0 w-12 self-center text-right tabular-nums leading-none"
+                      title={`${player.pointCount} of ${gamePointTotal} points this game · ${player.tournamentPointCount} of ${tournamentPointTotal} this tournament`}
+                    >
+                      <span className="block text-sm font-semibold">
+                        {player.pointCount}
+                        <span className="text-muted-foreground font-normal">
+                          /{gamePointTotal}
+                        </span>
+                      </span>
+                      <span className="block text-[10px] text-muted-foreground mt-0.5">
+                        {player.tournamentPointCount}/{tournamentPointTotal}
+                      </span>
+                    </span>
+
                   </button>
                 );
               })}
@@ -972,7 +1363,7 @@ export function PlayView({
                         ),
                       )
                     }
-                    className="flex-1 h-10 rounded-xl border text-sm font-medium flex items-center justify-center gap-1.5 border-input bg-card text-foreground hover:bg-accent transition-colors"
+                    className="flex-1 h-10 rounded-lg border text-sm font-medium flex items-center justify-center gap-1.5 border-border bg-card text-foreground hover:bg-accent transition-colors"
                   >
                     <RefreshCw className="h-3.5 w-3.5" />
                     Same
@@ -981,14 +1372,14 @@ export function PlayView({
                 <button
                   onClick={() => setSelectedIds(recommendedIds)}
                   className={cn(
-                    "h-10 rounded-xl border text-sm font-medium flex items-center justify-center gap-1.5 border-amber-300 bg-amber-50 text-amber-700 hover:bg-amber-100 transition-colors",
+                    "h-10 rounded-lg border text-sm font-medium flex items-center justify-center gap-1.5 border-border bg-card text-foreground hover:bg-accent transition-colors",
                     lastLineupIds.size === 7 ? "flex-1" : "w-full",
                   )}
                 >
                   <Wand2 className="h-3.5 w-3.5" />
                   {mode === "FAIR"
-                    ? "Suggest"
-                    : `Suggest · ${rungLabel(suggestion.rung, situation)}`}
+                    ? "Take suggestion"
+                    : `Take · ${rungLabel(suggestion.rung, situation)}`}
                 </button>
               </div>
               <Button
@@ -1031,11 +1422,6 @@ export function PlayView({
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5 flex-wrap">
-                      {p.number != null && (
-                        <span className="text-xs font-mono text-muted-foreground">
-                          #{p.number}
-                        </span>
-                      )}
                       <span
                         className={cn(
                           "text-sm font-medium",
@@ -1044,13 +1430,10 @@ export function PlayView({
                       >
                         {p.name}
                       </span>
-                      <span
-                        className={cn(
-                          "text-[10px] px-1.5 py-0.5 rounded font-semibold",
-                          ROLE_COLORS[p.role],
-                        )}
-                      >
-                        {ROLE_SHORT[p.role]}
+                      <RoleTag role={p.role} />
+                      <span className="text-[10px] text-muted-foreground tabular-nums">
+                        {p.pointCount}/{gamePointTotal} pt · {p.tournamentPointCount}/
+                        {tournamentPointTotal} tourn
                       </span>
                     </div>
                     {lines.length > 0 && (

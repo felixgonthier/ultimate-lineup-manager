@@ -9,7 +9,7 @@ import {
   assertTournamentOwned,
   requireTeam,
 } from "@/lib/session";
-import { isCallahanPoint } from "@/lib/stats";
+import { computePlayerStatsFromPoints, isCallahanPoint } from "@/lib/stats";
 import type { Rung } from "@/lib/lineup";
 
 export async function recordPoint(data: {
@@ -137,6 +137,49 @@ export async function getPlayerPointCounts(gameId: string) {
     counts[pp.playerId] = (counts[pp.playerId] || 0) + 1;
   }
   return counts;
+}
+
+/**
+ * Season-so-far form for the sideline: every player's conversion, defensive work
+ * rate and scoring involvement across this tournament. A single game gives too
+ * thin a sample to call a line off — one blown hold and a 0/1 reads like a
+ * liability — so the play screen shows the day's numbers alongside the game's.
+ */
+export async function getTournamentPlayerStats(tournamentId: string) {
+  const { team } = await requireTeam();
+  await assertTournamentOwned(tournamentId, team.id);
+
+  const [points, players] = await Promise.all([
+    prisma.point.findMany({
+      where: { game: { tournamentId } },
+      select: {
+        ourOffense: true,
+        scoredByUs: true,
+        callahan: true,
+        goalPlayerId: true,
+        assistPlayerId: true,
+        players: { select: { playerId: true, blocks: true } },
+      },
+    }),
+    prisma.player.findMany({
+      where: { teamId: team.id, active: true },
+      select: { id: true, name: true, number: true },
+    }),
+  ]);
+
+  return computePlayerStatsFromPoints(points, players);
+}
+
+/**
+ * Points recorded across the tournament — the denominator that turns a player's
+ * count into a share of the day.
+ */
+export async function getTournamentPointTotal(
+  tournamentId: string,
+): Promise<number> {
+  const { team } = await requireTeam();
+  await assertTournamentOwned(tournamentId, team.id);
+  return prisma.point.count({ where: { game: { tournamentId } } });
 }
 
 /**

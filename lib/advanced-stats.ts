@@ -306,6 +306,12 @@ function isOutOfReach(g: GameAnalysis): boolean {
 export type StatsOptions = {
   /** `null` means every tournament. */
   tournamentId: string | null;
+  /**
+   * Hand-picked games. `null` means every game that passes the other filters —
+   * which is not the same as listing them all, since a null set keeps following
+   * the tournament and difficulty filters instead of freezing today's answer.
+   */
+  gameIds: string[] | null;
   mode: Mode;
   difficulty: DifficultyFilter;
   minPoints: number;
@@ -313,6 +319,7 @@ export type StatsOptions = {
 
 export const DEFAULT_OPTIONS: StatsOptions = {
   tournamentId: null,
+  gameIds: null,
   mode: "adjusted",
   difficulty: "ALL",
   minPoints: 10,
@@ -331,8 +338,13 @@ export function selectGames(
           (t: PayloadTournament) => t.id === opts.tournamentId,
         );
 
+  // An explicit pick is an extra gate, not a replacement for the others: a game
+  // the admin excluded outright still stays out even if it's ticked.
+  const picked = opts.gameIds === null ? null : new Set<string>(opts.gameIds);
+
   return analyses.map((g: GameAnalysis) => {
     if (g.excluded) return false;
+    if (picked !== null && !picked.has(g.id)) return false;
     if (tournamentIndex >= 0 && g.tournamentIndex !== tournamentIndex) {
       return false;
     }
