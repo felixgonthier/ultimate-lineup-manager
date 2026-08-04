@@ -181,6 +181,19 @@ function skillScore(
   return starsFirst ? Math.max(tier, blended) : blended;
 }
 
+/**
+ * Whether stars are seeded onto the line ahead of the score ordering.
+ *
+ * A results-mode starting call is the coach saying "field the best seven" — so
+ * the tier is a hard guarantee there, not just a heavy term: stars go on first
+ * and the score only orders the slots they leave. Push rungs already floor
+ * stars at their tier inside `skillScore`, and the rest rungs (DEPTH /
+ * ROTATION) exist precisely to rest them, so neither is included.
+ */
+function starsGuaranteed(mode: LineupMode, rung: Rung): boolean {
+  return mode === "RESULTS" && rung === "STARTING";
+}
+
 /** Rungs above a mode's ceiling collapse to that ceiling. */
 export function clampRung(mode: LineupMode, rung: Rung): Rung {
   if (mode === "FAIR") return "ROTATION";
@@ -268,11 +281,15 @@ function eligibleCandidates(
   if (mode === "FAIR") return candidates;
 
   const pushing = rung === "FULL_PUSH";
+  const starsExempt = starsGuaranteed(mode, rung);
   const allowedTiers = RUNG_MODIFIERS[rung].tiers;
 
   const blocked: Candidate[] = [];
   const eligible = candidates.filter((c: Candidate) => {
-    const gassed = !pushing && c.streak >= STREAK_HARD_LIMIT;
+    // A guaranteed star is exempt from the fatigue block; everyone else on the
+    // same call is not, so the rest of the line still rotates around them.
+    const fatigueExempt = pushing || (starsExempt && c.tier === "STAR");
+    const gassed = !fatigueExempt && c.streak >= STREAK_HARD_LIMIT;
     const wrongTier = allowedTiers !== null && !allowedTiers.includes(c.tier);
     if (gassed || wrongTier) {
       blocked.push(c);
@@ -367,6 +384,15 @@ export function suggestLine(input: SuggestInput): Suggestion {
   const ordered = [...eligible].sort(
     (a: Candidate, b: Candidate) => scores[b.id] - scores[a.id],
   );
+  // Stars ahead of the field, still score-ordered among themselves. Feeding the
+  // unchanged picker a reordered list is what keeps the role floor intact: the
+  // guarantee fills the slots the floor leaves, it does not break it.
+  if (starsGuaranteed(mode, rung)) {
+    ordered.sort(
+      (a: Candidate, b: Candidate) =>
+        Number(b.tier === "STAR") - Number(a.tier === "STAR"),
+    );
+  }
 
   return {
     playerIds: pickWithRoleFloor(ordered, size).map((c: Candidate) => c.id),
