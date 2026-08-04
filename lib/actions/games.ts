@@ -42,6 +42,7 @@ export async function getGame(id: string) {
           players: { include: { player: true } },
           assistPlayer: true,
           goalPlayer: true,
+          hockeyAssistPlayer: true,
         },
       },
     },

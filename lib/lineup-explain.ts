@@ -147,14 +147,6 @@ export function explainCandidate(input: ExplainInput): Reason[] {
         });
       }
     }
-
-    if (spread && c.streak === 0 && reasons.length < 3) {
-      reasons.push({
-        label: "Fresh",
-        tone: "good",
-        detail: "Did not play the last point",
-      });
-    }
   }
 
   return reasons;

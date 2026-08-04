@@ -1,8 +1,9 @@
 "use server";
 
-import { revalidatePath } from "next/cache";
+import { revalidatePath, revalidateTag } from "next/cache";
 import { prisma } from "@/lib/db";
 import { assertGameOwned, requireAdminTeam } from "@/lib/session";
+import { ratingsCacheTag } from "@/lib/lineup-ratings";
 import {
   RESULT_LOST,
   RESULT_UNDECIDED,
@@ -54,7 +55,8 @@ export async function getAdvancedStatsPayload(): Promise<StatsPayload> {
         callahan: true,
         goalPlayerId: true,
         assistPlayerId: true,
-        players: { select: { playerId: true, blocks: true } },
+        hockeyAssistPlayerId: true,
+        players: { select: { playerId: true, blocks: true, turnovers: true } },
       },
       orderBy: [{ gameId: "asc" }, { pointNumber: "asc" }],
     }),
@@ -72,6 +74,7 @@ export async function getAdvancedStatsPayload(): Promise<StatsPayload> {
 
   const packedPoints: PackedPoint[] = [];
   const blocks: number[][] = [];
+  const turnovers: number[][] = [];
 
   for (const pt of points) {
     const gi = gameIndex.get(pt.gameId);
@@ -86,11 +89,13 @@ export async function getAdvancedStatsPayload(): Promise<StatsPayload> {
 
     const onField: number[] = [];
     const pointBlocks: [number, number][] = [];
+    const pointTurnovers: [number, number][] = [];
     for (const pp of pt.players) {
       const pi = playerIndex.get(pp.playerId);
       if (pi === undefined) continue;
       onField.push(pi);
       if (pp.blocks > 0) pointBlocks.push([pi, pp.blocks]);
+      if (pp.turnovers > 0) pointTurnovers.push([pi, pp.turnovers]);
     }
 
     const goalIdx =
@@ -98,6 +103,10 @@ export async function getAdvancedStatsPayload(): Promise<StatsPayload> {
     const assistIdx =
       pt.assistPlayerId !== null
         ? (playerIndex.get(pt.assistPlayerId) ?? -1)
+        : -1;
+    const hockeyAssistIdx =
+      pt.hockeyAssistPlayerId !== null
+        ? (playerIndex.get(pt.hockeyAssistPlayerId) ?? -1)
         : -1;
 
     const packedIndex = packedPoints.length;
@@ -108,11 +117,15 @@ export async function getAdvancedStatsPayload(): Promise<StatsPayload> {
       goalIdx,
       assistIdx,
       pt.callahan ? 1 : 0,
+      hockeyAssistIdx,
       ...onField,
     ]);
 
     for (const [pi, count] of pointBlocks) {
       blocks.push([packedIndex, pi, count]);
+    }
+    for (const [pi, count] of pointTurnovers) {
+      turnovers.push([packedIndex, pi, count]);
     }
   }
 
@@ -139,6 +152,7 @@ export async function getAdvancedStatsPayload(): Promise<StatsPayload> {
     })),
     points: packedPoints,
     blocks,
+    turnovers,
   };
 }
 
@@ -152,6 +166,9 @@ export async function setGameDifficulty(
     where: { id: gameId },
     data: { difficulty },
   });
+  // Difficulty decides which games feed the hold/break ratings, so retagging a
+  // game has to invalidate them too.
+  revalidateTag(ratingsCacheTag(team.id), "max");
   revalidatePath("/stats");
 }
 
@@ -166,5 +183,6 @@ export async function setGameExcluded(
     where: { id: gameId },
     data: { excludeFromStats: excluded },
   });
+  revalidateTag(ratingsCacheTag(team.id), "max");
   revalidatePath("/stats");
 }

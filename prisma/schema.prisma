@@ -108,6 +108,7 @@ model Player {
   pointPlayers PointPlayer[]
   assistPoints Point[]        @relation("AssistPlayer")
   goalPoints   Point[]        @relation("GoalPlayer")
+  hockeyAssistPoints Point[]  @relation("HockeyAssistPlayer")
 }
 
 model Tournament {
@@ -177,17 +178,23 @@ model Point {
   callahan        Boolean       @default(false)
   assistPlayerId  String?
   goalPlayerId    String?
+  /// The pass before the assist — a "hockey assist". Null when the point was
+  /// scored in two touches or fewer, or when nobody tapped it in.
+  hockeyAssistPlayerId String?
   createdAt       DateTime      @default(now())
   game            Game          @relation(fields: [gameId], references: [id], onDelete: Cascade)
   assistPlayer    Player?       @relation("AssistPlayer", fields: [assistPlayerId], references: [id])
   goalPlayer      Player?       @relation("GoalPlayer", fields: [goalPlayerId], references: [id])
+  hockeyAssistPlayer Player?    @relation("HockeyAssistPlayer", fields: [hockeyAssistPlayerId], references: [id])
   players         PointPlayer[]
 }
 
 model PointPlayer {
-  pointId  String
-  playerId String
-  blocks   Int    @default(0)
+  pointId   String
+  playerId  String
+  blocks    Int    @default(0)
+  /// Drops and throwaways charged to this player on this point.
+  turnovers Int    @default(0)
   point    Point  @relation(fields: [pointId], references: [id], onDelete: Cascade)
   player   Player @relation(fields: [playerId], references: [id], onDelete: Cascade)
 

@@ -68,10 +68,23 @@ const COLUMNS: Record<View, Column[]> = {
       sortValue: (s: PlayerStats) => s.assists,
     },
     {
+      key: "a2",
+      label: "HA",
+      display: (s: PlayerStats) => countOrDash(s.hockeyAssists),
+      sortValue: (s: PlayerStats) => s.hockeyAssists,
+    },
+    {
       key: "d",
       label: "D",
       display: (s: PlayerStats) => countOrDash(s.blocks),
       sortValue: (s: PlayerStats) => s.blocks,
+    },
+    {
+      key: "to",
+      label: "TO",
+      display: (s: PlayerStats) => countOrDash(s.turnovers),
+      sortValue: (s: PlayerStats) => s.turnovers,
+      tone: (s: PlayerStats) => (s.turnovers > 0 ? "text-amber-600" : undefined),
     },
     {
       key: "pts",
@@ -100,6 +113,20 @@ const COLUMNS: Record<View, Column[]> = {
       label: "A",
       display: (s: PlayerStats) => countOrDash(s.oAssists),
       sortValue: (s: PlayerStats) => s.oAssists,
+    },
+    {
+      key: "oa2",
+      label: "HA",
+      display: (s: PlayerStats) => countOrDash(s.oHockeyAssists),
+      sortValue: (s: PlayerStats) => s.oHockeyAssists,
+    },
+    {
+      key: "oto",
+      label: "TO",
+      display: (s: PlayerStats) => countOrDash(s.oTurnovers),
+      sortValue: (s: PlayerStats) => s.oTurnovers,
+      tone: (s: PlayerStats) =>
+        s.oTurnovers > 0 ? "text-amber-600" : undefined,
     },
     {
       key: "hold",
@@ -134,6 +161,14 @@ const COLUMNS: Record<View, Column[]> = {
       label: "D",
       display: (s: PlayerStats) => countOrDash(s.blocks),
       sortValue: (s: PlayerStats) => s.blocks,
+    },
+    {
+      key: "dto",
+      label: "TO",
+      display: (s: PlayerStats) => countOrDash(s.dTurnovers),
+      sortValue: (s: PlayerStats) => s.dTurnovers,
+      tone: (s: PlayerStats) =>
+        s.dTurnovers > 0 ? "text-amber-600" : undefined,
     },
     {
       key: "break",
@@ -214,14 +249,19 @@ export function StatsLeaderboard({
 
   // Tailwind needs literal class names, so enumerate rather than build the template.
   const GRID_COLS: Record<number, string> = {
-    2: "grid-cols-[auto_1fr_auto_auto]",
-    3: "grid-cols-[auto_1fr_auto_auto_auto]",
-    4: "grid-cols-[auto_1fr_auto_auto_auto_auto]",
-    5: "grid-cols-[auto_1fr_auto_auto_auto_auto_auto]",
+    2: "grid-cols-[auto_minmax(6rem,1fr)_auto_auto]",
+    3: "grid-cols-[auto_minmax(6rem,1fr)_auto_auto_auto]",
+    4: "grid-cols-[auto_minmax(6rem,1fr)_auto_auto_auto_auto]",
+    5: "grid-cols-[auto_minmax(6rem,1fr)_auto_auto_auto_auto_auto]",
+    6: "grid-cols-[auto_minmax(6rem,1fr)_auto_auto_auto_auto_auto_auto]",
+    7: "grid-cols-[auto_minmax(6rem,1fr)_auto_auto_auto_auto_auto_auto_auto]",
   };
-  const gridCols = GRID_COLS[cols.length] ?? GRID_COLS[5];
-  // Tighten the stat cells once there are enough columns to crowd a phone screen.
-  const cellWidth = cols.length >= 5 ? "w-9" : "w-11";
+  const gridCols = GRID_COLS[cols.length] ?? GRID_COLS[7];
+  // Cells keep a comfortable width; the table scrolls horizontally when the
+  // columns no longer fit a narrow screen.
+  const cellWidth = "w-10";
+  // # column + horizontal padding + player min-width + one cell per stat column.
+  const minWidth = 32 + 32 + 96 + cols.length * 40;
 
   function SortArrow({ active }: { active: boolean }) {
     if (!active) return null;
@@ -265,72 +305,76 @@ export function StatsLeaderboard({
             </div>
           </div>
         )}
-        <div
-          className={cn(
-            "grid text-xs text-muted-foreground font-medium uppercase tracking-wide px-4 py-1 border-b",
-            gridCols,
-          )}
-        >
-          <button
-            onClick={() => handleSort("num")}
-            className={cn(
-              "w-8 text-center hover:text-foreground transition-colors flex items-center gap-1",
-              activeKey === "num" && "text-foreground",
-            )}
-          >
-            # <SortArrow active={activeKey === "num"} />
-          </button>
-          <button
-            onClick={() => handleSort("player")}
-            className={cn(
-              "text-left hover:text-foreground transition-colors flex items-center gap-1",
-              activeKey === "player" && "text-foreground",
-            )}
-          >
-            Player <SortArrow active={activeKey === "player"} />
-          </button>
-          {cols.map((c: Column) => (
-            <button
-              key={c.key}
-              onClick={() => handleSort(c.key)}
+        <div className="overflow-x-auto">
+          <div style={{ minWidth }}>
+            <div
               className={cn(
-                "text-center hover:text-foreground transition-colors flex items-center gap-1 justify-center",
-                cellWidth,
-                activeKey === c.key && "text-foreground",
+                "grid text-xs text-muted-foreground font-medium uppercase tracking-wide px-4 py-1 border-b",
+                gridCols,
               )}
             >
-              {c.label} <SortArrow active={activeKey === c.key} />
-            </button>
-          ))}
-        </div>
-        {sorted.map((s: PlayerStats, i: number) => (
-          <div
-            key={s.id}
-            className={cn(
-              "grid items-center px-4 py-2 text-sm",
-              gridCols,
-              i < sorted.length - 1 ? "border-b" : "",
-            )}
-          >
-            <span className="w-8 text-center tabular-nums text-muted-foreground">
-              {s.number != null ? s.number : "–"}
-            </span>
-            <span className="font-medium truncate">{s.name}</span>
-            {cols.map((c: Column) => (
-              <span
-                key={c.key}
+              <button
+                onClick={() => handleSort("num")}
                 className={cn(
-                  "text-center tabular-nums",
-                  cellWidth,
-                  c.dim && "text-muted-foreground",
-                  c.tone?.(s),
+                  "w-8 text-center hover:text-foreground transition-colors flex items-center gap-1",
+                  activeKey === "num" && "text-foreground",
                 )}
               >
-                {c.display(s)}
-              </span>
+                # <SortArrow active={activeKey === "num"} />
+              </button>
+              <button
+                onClick={() => handleSort("player")}
+                className={cn(
+                  "text-left hover:text-foreground transition-colors flex items-center gap-1",
+                  activeKey === "player" && "text-foreground",
+                )}
+              >
+                Player <SortArrow active={activeKey === "player"} />
+              </button>
+              {cols.map((c: Column) => (
+                <button
+                  key={c.key}
+                  onClick={() => handleSort(c.key)}
+                  className={cn(
+                    "text-center hover:text-foreground transition-colors flex items-center gap-1 justify-center",
+                    cellWidth,
+                    activeKey === c.key && "text-foreground",
+                  )}
+                >
+                  {c.label} <SortArrow active={activeKey === c.key} />
+                </button>
+              ))}
+            </div>
+            {sorted.map((s: PlayerStats, i: number) => (
+              <div
+                key={s.id}
+                className={cn(
+                  "grid items-center px-4 py-2 text-sm",
+                  gridCols,
+                  i < sorted.length - 1 ? "border-b" : "",
+                )}
+              >
+                <span className="w-8 text-center tabular-nums text-muted-foreground">
+                  {s.number != null ? s.number : "–"}
+                </span>
+                <span className="font-medium truncate">{s.name}</span>
+                {cols.map((c: Column) => (
+                  <span
+                    key={c.key}
+                    className={cn(
+                      "text-center tabular-nums",
+                      cellWidth,
+                      c.dim && "text-muted-foreground",
+                      c.tone?.(s),
+                    )}
+                  >
+                    {c.display(s)}
+                  </span>
+                ))}
+              </div>
             ))}
           </div>
-        ))}
+        </div>
       </CardContent>
     </Card>
   );

@@ -24,9 +24,13 @@ export async function recordPoint(data: {
   playerIds: string[];
   /** Defensive blocks ("D"s) credited this point, keyed by player id. */
   blocks?: Record<string, number>;
+  /** Drops and throwaways charged this point, keyed by player id. */
+  turnovers?: Record<string, number>;
   scoredByUs?: boolean;
   assistPlayerId?: string;
   goalPlayerId?: string;
+  /** Thrower of the pass before the assist. */
+  hockeyAssistPlayerId?: string;
 }) {
   const { team } = await requireTeam();
   await assertGameOwned(data.gameId, team.id);
@@ -39,12 +43,22 @@ export async function recordPoint(data: {
   if (data.goalPlayerId) {
     await assertPlayerOwned(data.goalPlayerId, team.id);
   }
+  if (data.hockeyAssistPlayerId) {
+    await assertPlayerOwned(data.hockeyAssistPlayerId, team.id);
+  }
 
-  const { playerIds, tournamentId, blocks, ...rest } = data;
+  const { playerIds, tournamentId, blocks, turnovers, ...rest } = data;
 
   // Implied, not chosen: a goal with no assist can only have been a callahan.
   const callahan = isCallahanPoint(rest);
-  const pointData = { ...rest, callahan };
+  // A hockey assist only exists behind an assist, and nobody throws to themself.
+  const hockeyAssistPlayerId =
+    rest.assistPlayerId &&
+    rest.hockeyAssistPlayerId &&
+    rest.hockeyAssistPlayerId !== rest.assistPlayerId
+      ? rest.hockeyAssistPlayerId
+      : null;
+  const pointData = { ...rest, hockeyAssistPlayerId, callahan };
 
   // Blocks are only credited to players who were on the field for this point.
   const blockCount = (playerId: string): number => {
@@ -55,6 +69,12 @@ export async function recordPoint(data: {
     return n;
   };
 
+  // Same rule for turnovers: only chargeable to someone who was on the field.
+  const turnoverCount = (playerId: string): number => {
+    const raw = turnovers?.[playerId] ?? 0;
+    return Number.isFinite(raw) && raw > 0 ? Math.floor(raw) : 0;
+  };
+
   const point = await prisma.point.create({
     data: {
       ...pointData,
@@ -62,6 +82,7 @@ export async function recordPoint(data: {
         create: playerIds.map((playerId: string) => ({
           playerId,
           blocks: blockCount(playerId),
+          turnovers: turnoverCount(playerId),
         })),
       },
     },
@@ -158,7 +179,8 @@ export async function getTournamentPlayerStats(tournamentId: string) {
         callahan: true,
         goalPlayerId: true,
         assistPlayerId: true,
-        players: { select: { playerId: true, blocks: true } },
+        hockeyAssistPlayerId: true,
+        players: { select: { playerId: true, blocks: true, turnovers: true } },
       },
     }),
     prisma.player.findMany({

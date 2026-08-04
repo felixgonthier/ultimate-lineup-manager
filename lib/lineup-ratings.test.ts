@@ -12,7 +12,9 @@ function stats(id: string, over: Partial<PlayerStats> = {}): PlayerStats {
     number: null,
     goals: 0,
     assists: 0,
+    hockeyAssists: 0,
     blocks: 0,
+    turnovers: 0,
     callahans: 0,
     pointsPlayed: 0,
     oPoints: 0,
@@ -21,6 +23,10 @@ function stats(id: string, over: Partial<PlayerStats> = {}): PlayerStats {
     dGoals: 0,
     oAssists: 0,
     dAssists: 0,
+    oHockeyAssists: 0,
+    dHockeyAssists: 0,
+    oTurnovers: 0,
+    dTurnovers: 0,
     plusMinus: 0,
     holds: 0,
     holdOpps: 0,
@@ -87,6 +93,46 @@ describe("shrinkage keeps small samples honest", () => {
       }),
     ]);
     assert.ok(r["blocker"].break!.score > r["passenger"].break!.score);
+  });
+
+  it("charges giveaways against the hold rating", () => {
+    const r = buildLineupRatings([
+      stats("careless", {
+        holds: 30,
+        holdOpps: 50,
+        oPoints: 50,
+        oTurnovers: 20,
+      }),
+      stats("safe", { holds: 30, holdOpps: 50, oPoints: 50, oTurnovers: 0 }),
+    ]);
+    assert.ok(r["safe"].hold!.score > r["careless"].hold!.score);
+  });
+
+  it("charges giveaways against the break rating too", () => {
+    const r = buildLineupRatings([
+      stats("careless", {
+        breaks: 20,
+        breakOpps: 50,
+        dPoints: 50,
+        dTurnovers: 20,
+      }),
+      stats("safe", { breaks: 20, breakOpps: 50, dPoints: 50, dTurnovers: 0 }),
+    ]);
+    assert.ok(r["safe"].break!.score > r["careless"].break!.score);
+  });
+
+  it("keeps a turnover on defence out of the hold rating", () => {
+    const r = buildLineupRatings([
+      stats("a", {
+        holds: 30,
+        holdOpps: 50,
+        oPoints: 50,
+        dPoints: 50,
+        dTurnovers: 20,
+      }),
+      stats("b", { holds: 30, holdOpps: 50, oPoints: 50, dPoints: 50 }),
+    ]);
+    assert.equal(r["a"].hold!.score, r["b"].hold!.score);
   });
 
   it("rates hold and break independently", () => {

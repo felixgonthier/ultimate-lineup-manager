@@ -30,6 +30,9 @@ export default async function GamePage({
     if (pt.goalPlayer) {
       playerLookup.set(pt.goalPlayer.id, { id: pt.goalPlayer.id, name: pt.goalPlayer.name, number: pt.goalPlayer.number });
     }
+    if (pt.hockeyAssistPlayer) {
+      playerLookup.set(pt.hockeyAssistPlayer.id, { id: pt.hockeyAssistPlayer.id, name: pt.hockeyAssistPlayer.name, number: pt.hockeyAssistPlayer.number });
+    }
   }
   const playerStats = computePlayerStatsFromPoints(
     game.points.map((pt: (typeof game.points)[number]) => ({
@@ -38,9 +41,11 @@ export default async function GamePage({
       callahan: pt.callahan,
       goalPlayerId: pt.goalPlayerId,
       assistPlayerId: pt.assistPlayerId,
+      hockeyAssistPlayerId: pt.hockeyAssistPlayerId,
       players: pt.players.map((pp: (typeof pt.players)[number]) => ({
         playerId: pp.player.id,
         blocks: pp.blocks,
+        turnovers: pp.turnovers,
       })),
     })),
     Array.from(playerLookup.values()),
@@ -105,6 +110,9 @@ export default async function GamePage({
               const blockers = point.players.filter(
                 (pp: (typeof point.players)[number]) => pp.blocks > 0,
               );
+              const giveaways = point.players.filter(
+                (pp: (typeof point.players)[number]) => pp.turnovers > 0,
+              );
 
               return (
                 <div
@@ -137,7 +145,15 @@ export default async function GamePage({
                       {point.goalPlayer && (
                         <span className="text-sm text-foreground/80 truncate">
                           {point.assistPlayer
-                            ? <>{point.assistPlayer.name} <span className="text-muted-foreground">→</span> <span className="font-medium">{point.goalPlayer.name}</span></>
+                            ? <>
+                                {point.hockeyAssistPlayer && (
+                                  <>
+                                    <span className="text-muted-foreground/70">{point.hockeyAssistPlayer.name}</span>{" "}
+                                    <span className="text-muted-foreground">→</span>{" "}
+                                  </>
+                                )}
+                                {point.assistPlayer.name} <span className="text-muted-foreground">→</span> <span className="font-medium">{point.goalPlayer.name}</span>
+                              </>
                             : <span className="font-medium">{point.goalPlayer.name}</span>
                           }
                         </span>
@@ -149,6 +165,16 @@ export default async function GamePage({
                         {blockers
                           .map((pp: (typeof point.players)[number]) =>
                             pp.blocks > 1 ? `${pp.player.name} ×${pp.blocks}` : pp.player.name,
+                          )
+                          .join(" · ")}
+                      </p>
+                    )}
+                    {giveaways.length > 0 && (
+                      <p className="text-xs text-amber-600 mt-1">
+                        TO:{" "}
+                        {giveaways
+                          .map((pp: (typeof point.players)[number]) =>
+                            pp.turnovers > 1 ? `${pp.player.name} ×${pp.turnovers}` : pp.player.name,
                           )
                           .join(" · ")}
                       </p>

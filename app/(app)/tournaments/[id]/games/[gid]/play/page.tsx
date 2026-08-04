@@ -6,7 +6,7 @@ import {
   getTournamentPointTotal,
   getTournamentPlayerStats,
 } from "@/lib/actions/points";
-import { getLineupRatings } from "@/lib/actions/lineup";
+import { getLineupIntel } from "@/lib/actions/lineup";
 import { PlayView, type GameImpact, type PlayerForm } from "./play-view";
 
 export const dynamic = "force-dynamic";
@@ -23,14 +23,14 @@ export default async function PlayPage({
     tournamentPointCounts,
     tournamentPointTotal,
     tournamentStats,
-    ratings,
+    intel,
   ] = await Promise.all([
     getGamePlayData(gid),
     getPlayerPointCounts(gid),
     getTournamentPointCounts(tournamentId),
     getTournamentPointTotal(tournamentId),
     getTournamentPlayerStats(tournamentId),
-    getLineupRatings(),
+    getLineupIntel(),
   ]);
 
   if (!playData || playData.game.tournament.id !== tournamentId) notFound();
@@ -94,7 +94,9 @@ export default async function PlayPage({
   )) {
     let goals = 0;
     let assists = 0;
+    let hockeyAssists = 0;
     let blocks = 0;
+    let turnovers = 0;
     let holds = 0;
     let holdOpps = 0;
     let breaks = 0;
@@ -103,8 +105,10 @@ export default async function PlayPage({
       const on = pt.players.find((pp: PointPlayer) => pp.playerId === playerId);
       if (!on) continue;
       blocks += on.blocks;
+      turnovers += on.turnovers;
       if (pt.goalPlayerId === playerId) goals++;
       if (pt.assistPlayerId === playerId) assists++;
+      if (pt.hockeyAssistPlayerId === playerId) hockeyAssists++;
       // An unrecorded outcome is not an opportunity missed, so it counts as
       // neither. Offence points are holds to convert, defence points breaks.
       if (pt.scoredByUs === null) continue;
@@ -119,7 +123,9 @@ export default async function PlayPage({
     impacts[playerId] = {
       goals,
       assists,
+      hockeyAssists,
       blocks,
+      turnovers,
       holds,
       holdOpps,
       breaks,
@@ -151,6 +157,7 @@ export default async function PlayPage({
       blocks: st.blocks,
       dPoints: st.dPoints,
       scores: st.goals + st.assists,
+      turnovers: st.turnovers,
       pointsPlayed: st.pointsPlayed,
     };
   }
@@ -216,7 +223,7 @@ export default async function PlayPage({
       breaks={{ us: breaksUs, them: breaksThem }}
       forms={forms}
       run={runCount > 0 && runByUs !== null ? { count: runCount, byUs: runByUs } : null}
-      ratings={ratings}
+      ratings={intel.ratings}
     />
   );
 }

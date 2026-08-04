@@ -19,6 +19,22 @@ const BLOCK_REFERENCE = 0.35;
 /** Size of that bonus, in conversion-rate terms. */
 const BLOCK_BONUS = 0.15;
 
+/**
+ * Turnovers per point at which a player carries the full giveaway penalty.
+ * Every possession lost is a conversion the line had to earn twice, so the rate
+ * adjusts hold and break the same way blocks lift break — as a nudge on the
+ * measured conversion, not a metric ranked on its own.
+ */
+const TURNOVER_REFERENCE = 0.3;
+/** Size of that penalty, in conversion-rate terms. */
+const TURNOVER_PENALTY = 0.12;
+
+/** 0..1 how far a per-point rate has run toward its reference. */
+function rateFraction(count: number, points: number, reference: number): number {
+  if (points <= 0) return 0;
+  return Math.min(1, count / points / reference);
+}
+
 /** ±2 standard deviations spans the 0..1 range. */
 const NORMALISE_SPREAD = 4;
 
@@ -46,19 +62,30 @@ type MetricSpec = {
 
 const SPECS: Record<RatingMetric, MetricSpec> = {
   hold: {
-    value: (p: PlayerStats) =>
-      p.holdOpps > 0 ? p.holds / p.holdOpps : null,
+    // Giving the disc away is how a hold is lost, so O-point turnover rate
+    // discounts the conversion the player's lines actually managed.
+    value: (p: PlayerStats) => {
+      if (p.holdOpps === 0) return null;
+      return (
+        p.holds / p.holdOpps -
+        TURNOVER_PENALTY *
+          rateFraction(p.oTurnovers, p.oPoints, TURNOVER_REFERENCE)
+      );
+    },
     opps: (p: PlayerStats) => p.holdOpps,
   },
   break: {
     // Generating the turn is most of the job on a D point, so defensive work
-    // rate nudges break conversion rather than being ranked separately.
+    // rate nudges break conversion rather than being ranked separately — and
+    // handing it straight back nudges the other way.
     value: (p: PlayerStats) => {
       if (p.breakOpps === 0) return null;
       const blocksPerDPoint = p.dPoints > 0 ? p.blocks / p.dPoints : 0;
       return (
         p.breaks / p.breakOpps +
-        BLOCK_BONUS * Math.min(1, blocksPerDPoint / BLOCK_REFERENCE)
+        BLOCK_BONUS * Math.min(1, blocksPerDPoint / BLOCK_REFERENCE) -
+        TURNOVER_PENALTY *
+          rateFraction(p.dTurnovers, p.dPoints, TURNOVER_REFERENCE)
       );
     },
     opps: (p: PlayerStats) => p.breakOpps,

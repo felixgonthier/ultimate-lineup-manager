@@ -4,7 +4,11 @@ export type PlayerStats = {
   number: number | null;
   goals: number;
   assists: number;
+  /** The pass before the assist. */
+  hockeyAssists: number;
   blocks: number;
+  /** Drops and throwaways charged to this player. */
+  turnovers: number;
   callahans: number;
   pointsPlayed: number;
   oPoints: number;
@@ -13,6 +17,11 @@ export type PlayerStats = {
   dGoals: number;
   oAssists: number;
   dAssists: number;
+  oHockeyAssists: number;
+  dHockeyAssists: number;
+  /** Split by point type, because a turnover on O costs a hold and one on D a break. */
+  oTurnovers: number;
+  dTurnovers: number;
   plusMinus: number;
   holds: number;
   holdOpps: number;
@@ -24,7 +33,9 @@ function emptyStats(): Omit<PlayerStats, "id" | "name" | "number"> {
   return {
     goals: 0,
     assists: 0,
+    hockeyAssists: 0,
     blocks: 0,
+    turnovers: 0,
     callahans: 0,
     pointsPlayed: 0,
     oPoints: 0,
@@ -33,6 +44,10 @@ function emptyStats(): Omit<PlayerStats, "id" | "name" | "number"> {
     dGoals: 0,
     oAssists: 0,
     dAssists: 0,
+    oHockeyAssists: 0,
+    dHockeyAssists: 0,
+    oTurnovers: 0,
+    dTurnovers: 0,
     plusMinus: 0,
     holds: 0,
     holdOpps: 0,
@@ -59,7 +74,8 @@ export type PointForStats = {
   callahan?: boolean;
   goalPlayerId: string | null;
   assistPlayerId: string | null;
-  players: { playerId: string; blocks?: number }[];
+  hockeyAssistPlayerId?: string | null;
+  players: { playerId: string; blocks?: number; turnovers?: number }[];
 };
 
 export function computePlayerStatsFromPoints(
@@ -76,12 +92,16 @@ export function computePlayerStatsFromPoints(
       const s = ensure(pp.playerId);
       s.pointsPlayed++;
       s.blocks += pp.blocks ?? 0;
+      const turnovers = pp.turnovers ?? 0;
+      s.turnovers += turnovers;
       if (pt.ourOffense) {
         s.oPoints++;
+        s.oTurnovers += turnovers;
         if (scored) s.holds++;
         if (scored || lost) s.holdOpps++;
       } else {
         s.dPoints++;
+        s.dTurnovers += turnovers;
         if (scored) s.breaks++;
         if (scored || lost) s.breakOpps++;
       }
@@ -101,6 +121,12 @@ export function computePlayerStatsFromPoints(
       s.assists++;
       if (pt.ourOffense) s.oAssists++;
       else s.dAssists++;
+    }
+    if (pt.hockeyAssistPlayerId) {
+      const s = ensure(pt.hockeyAssistPlayerId);
+      s.hockeyAssists++;
+      if (pt.ourOffense) s.oHockeyAssists++;
+      else s.dHockeyAssists++;
     }
   }
 

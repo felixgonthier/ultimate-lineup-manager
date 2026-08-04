@@ -78,10 +78,11 @@ export type PayloadGame = {
 
 /**
  * A point, packed as a flat number array to keep the payload small:
- * `[gameIndex, ourOffense, result, goalIndex, assistIndex, blockCount, ...onFieldPlayerIndexes]`
+ * `[gameIndex, ourOffense, result, goalIndex, assistIndex, callahan,
+ *   hockeyAssistIndex, ...onFieldPlayerIndexes]`
  *
  * Player indexes are positions in `StatsPayload.players`; `-1` means none.
- * Blocks are stored separately in `blocksByPlayer` since they are sparse.
+ * Blocks and turnovers are stored separately since they are sparse.
  */
 export type PackedPoint = number[];
 
@@ -92,6 +93,8 @@ export type StatsPayload = {
   points: PackedPoint[];
   /** `[pointIndex, playerIndex, blocks]` for every non-zero block tally. */
   blocks: number[][];
+  /** `[pointIndex, playerIndex, turnovers]` for every non-zero giveaway tally. */
+  turnovers: number[][];
 };
 
 export const RESULT_LOST = 0;
@@ -104,7 +107,8 @@ const P_RESULT = 2;
 const P_GOAL = 3;
 const P_ASSIST = 4;
 const P_CALLAHAN = 5;
-const P_PLAYERS = 6;
+const P_HOCKEY_ASSIST = 6;
+const P_PLAYERS = 7;
 
 /** A game needs at least this many decided points before we judge its difficulty. */
 export const MIN_GAME_POINTS_FOR_DIFFICULTY = 4;
@@ -423,6 +427,8 @@ export type RoleRelative = {
   holdPct: number | null;
   breakPct: number | null;
   involvement: number | null;
+  /** Gap on giveaways per point. Unlike the rest, less is better here. */
+  turnoverRate: number | null;
 };
 
 const EMPTY_ROLE_RELATIVE: RoleRelative = {
@@ -432,6 +438,7 @@ const EMPTY_ROLE_RELATIVE: RoleRelative = {
   holdPct: null,
   breakPct: null,
   involvement: null,
+  turnoverRate: null,
 };
 
 /** A stat-derived label, carrying the numbers that earned it. */
@@ -454,7 +461,11 @@ export type ArchetypeFamily =
   | "chemistry"
   | "consistency"
   | "trajectory"
-  | "defence";
+  | "defence"
+  /** Work in the scoring chain behind the assist. */
+  | "chain"
+  /** Care of the disc. */
+  | "possession";
 
 /** "watch" labels are diagnostic rather than complimentary. */
 export type ArchetypeTone = "positive" | "neutral" | "watch";
@@ -488,12 +499,25 @@ export type PlayerAdvanced = {
   breakPct: number | null;
   goals: number;
   assists: number;
+  /** Passes thrown to the assist — the touch before the score. */
+  hockeyAssists: number;
   blocks: number;
+  turnovers: number;
+  oTurnovers: number;
+  dTurnovers: number;
   callahans: number;
   /** Blocks per D point — defensive work rate. */
   blocksPerDPoint: number | null;
+  /** Giveaways per point played. Lower is better. */
+  turnoverRate: number | null;
   /** Share of on-field points where this player scored or assisted. */
   involvement: number | null;
+  /**
+   * Involvement widened to include hockey assists: scoring-chain credits per
+   * point played. A rate rather than a share — a give-and-go goal credits the
+   * same player twice on one point.
+   */
+  chainInvolvement: number | null;
   /** Conversion when the game was tough or out of reach. */
   toughDecided: number;
   toughConversion: number | null;
@@ -548,7 +572,11 @@ type PlayerTally = {
   breakOpps: number;
   goals: number;
   assists: number;
+  hockeyAssists: number;
   blocks: number;
+  turnovers: number;
+  oTurnovers: number;
+  dTurnovers: number;
   callahans: number;
   paa: number;
 };
@@ -573,7 +601,11 @@ function emptyPlayerTally(): PlayerTally {
     breakOpps: 0,
     goals: 0,
     assists: 0,
+    hockeyAssists: 0,
     blocks: 0,
+    turnovers: 0,
+    oTurnovers: 0,
+    dTurnovers: 0,
     callahans: 0,
     paa: 0,
   };
@@ -645,14 +677,20 @@ export function computeStats(
     map.set(key, (map.get(key) ?? 0) + by);
   };
 
-  // Blocks are sparse, so they arrive as a side table keyed by point index.
-  const blocksByPoint = new Map<number, [number, number][]>();
-  for (const entry of payload.blocks) {
-    const [pointIndex, playerIndex, count] = entry;
-    const list = blocksByPoint.get(pointIndex);
-    if (list) list.push([playerIndex, count]);
-    else blocksByPoint.set(pointIndex, [[playerIndex, count]]);
-  }
+  // Blocks and turnovers are sparse, so they arrive as side tables keyed by
+  // point index.
+  const byPoint = (entries: number[][]): Map<number, [number, number][]> => {
+    const map = new Map<number, [number, number][]>();
+    for (const entry of entries) {
+      const [pointIndex, playerIndex, count] = entry;
+      const list = map.get(pointIndex);
+      if (list) list.push([playerIndex, count]);
+      else map.set(pointIndex, [[playerIndex, count]]);
+    }
+    return map;
+  };
+  const blocksByPoint = byPoint(payload.blocks);
+  const turnoversByPoint = byPoint(payload.turnovers);
 
   let totalPoints = 0;
   let totalDecided = 0;
@@ -764,15 +802,30 @@ export function computeStats(
       }
     }
 
+    const turnoversHere = turnoversByPoint.get(pi);
+    if (turnoversHere) {
+      for (const [playerIndex, count] of turnoversHere) {
+        const t = tallies[playerIndex];
+        if (!t) continue;
+        t.turnovers += count;
+        if (offense) t.oTurnovers += count;
+        else t.dTurnovers += count;
+      }
+    }
+
     if (won) {
       const goalIndex = pt[P_GOAL];
       const assistIndex = pt[P_ASSIST];
+      const hockeyAssistIndex = pt[P_HOCKEY_ASSIST];
       if (goalIndex >= 0 && tallies[goalIndex]) {
         tallies[goalIndex].goals++;
         if (pt[P_CALLAHAN] === 1) tallies[goalIndex].callahans++;
       }
       if (assistIndex >= 0 && tallies[assistIndex]) {
         tallies[assistIndex].assists++;
+      }
+      if (hockeyAssistIndex >= 0 && tallies[hockeyAssistIndex]) {
+        tallies[hockeyAssistIndex].hockeyAssists++;
       }
     }
 
@@ -917,10 +970,19 @@ export function computeStats(
       breakPct: ratio(t.breaks, t.breakOpps),
       goals: t.goals,
       assists: t.assists,
+      hockeyAssists: t.hockeyAssists,
       blocks: t.blocks,
+      turnovers: t.turnovers,
+      oTurnovers: t.oTurnovers,
+      dTurnovers: t.dTurnovers,
       callahans: t.callahans,
       blocksPerDPoint: ratio(t.blocks, t.dPoints),
+      turnoverRate: ratio(t.turnovers, t.pointsPlayed),
       involvement: ratio(t.goals + t.assists, t.pointsPlayed),
+      chainInvolvement: ratio(
+        t.goals + t.assists + t.hockeyAssists,
+        t.pointsPlayed,
+      ),
       toughDecided: t.toughDecided,
       toughConversion: ratio(t.toughWins, t.toughDecided),
       easyDecided: t.easyDecided,
@@ -1026,6 +1088,7 @@ const ROLE_METRICS: MetricKey[] = [
   "holdPct",
   "breakPct",
   "involvement",
+  "turnoverRate",
 ];
 
 function metricValue(p: PlayerAdvanced, key: MetricKey): number | null {
@@ -1042,6 +1105,8 @@ function metricValue(p: PlayerAdvanced, key: MetricKey): number | null {
       return p.breakPct;
     case "involvement":
       return p.involvement;
+    case "turnoverRate":
+      return p.turnoverRate;
   }
 }
 
@@ -1102,6 +1167,8 @@ function percentile(values: number[], q: number): number {
 type ArchetypeContext = {
   teamGoalRate: number;
   teamAssistRate: number;
+  teamHockeyAssistRate: number;
+  teamTurnoverRate: number;
   teamInvolvement: number;
   teamHold: number | null;
   teamBreak: number | null;
@@ -1559,6 +1626,58 @@ const ARCHETYPE_RULES: ArchetypeRule[] = [
       };
     },
   },
+
+  // --- Scoring chain -------------------------------------------------------
+  {
+    id: "facilitator",
+    label: "Facilitator",
+    family: "chain",
+    tone: "positive",
+    test: (p: PlayerAdvanced, ctx: ArchetypeContext) => {
+      if (p.hockeyAssists < 3 || ctx.teamHockeyAssistRate <= 0) return null;
+      const rate = ratio(p.hockeyAssists, p.pointsPlayed) ?? 0;
+      const x = rate / ctx.teamHockeyAssistRate;
+      if (x < ARCHETYPE_RATE_MULTIPLIER) return null;
+      return {
+        strength: x,
+        detail: `${p.hockeyAssists} hockey assists — the pass that makes the assist, ${x.toFixed(1)}× team rate`,
+      };
+    },
+  },
+
+  // --- Possession ----------------------------------------------------------
+  {
+    id: "safe-hands",
+    label: "Safe Hands",
+    family: "possession",
+    tone: "positive",
+    test: (p: PlayerAdvanced, ctx: ArchetypeContext) => {
+      if (p.pointsPlayed < 15 || ctx.teamTurnoverRate <= 0) return null;
+      if (p.turnoverRate === null) return null;
+      const x = p.turnoverRate / ctx.teamTurnoverRate;
+      if (x > 0.5) return null;
+      return {
+        strength: 1 - x,
+        detail: `${p.turnovers} turnovers over ${p.pointsPlayed} points, half the team's rate or better`,
+      };
+    },
+  },
+  {
+    id: "loose",
+    label: "Loose With It",
+    family: "possession",
+    tone: "watch",
+    test: (p: PlayerAdvanced, ctx: ArchetypeContext) => {
+      if (p.pointsPlayed < 15 || ctx.teamTurnoverRate <= 0) return null;
+      if (p.turnoverRate === null || p.turnovers < 3) return null;
+      const x = p.turnoverRate / ctx.teamTurnoverRate;
+      if (x < 1.6) return null;
+      return {
+        strength: x,
+        detail: `${p.turnoverRate.toFixed(2)} turnovers/pt vs ${ctx.teamTurnoverRate.toFixed(2)} team`,
+      };
+    },
+  },
 ];
 
 /** Mean chemistry across a player's partners, for the Connector/Lone Wolf split. */
@@ -1607,6 +1726,8 @@ function applyArchetypes(
 
   let goals = 0;
   let assists = 0;
+  let hockeyAssists = 0;
+  let turnovers = 0;
   let onFieldPoints = 0;
   let holds = 0;
   let holdOpps = 0;
@@ -1615,6 +1736,8 @@ function applyArchetypes(
   for (const p of eligible) {
     goals += p.goals;
     assists += p.assists;
+    hockeyAssists += p.hockeyAssists;
+    turnovers += p.turnovers;
     onFieldPoints += p.pointsPlayed;
     holds += p.holds;
     holdOpps += p.holdOpps;
@@ -1626,6 +1749,8 @@ function applyArchetypes(
   const ctx: ArchetypeContext = {
     teamGoalRate: ratio(goals, onFieldPoints) ?? 0,
     teamAssistRate: ratio(assists, onFieldPoints) ?? 0,
+    teamHockeyAssistRate: ratio(hockeyAssists, onFieldPoints) ?? 0,
+    teamTurnoverRate: ratio(turnovers, onFieldPoints) ?? 0,
     teamInvolvement: ratio(goals + assists, onFieldPoints) ?? 0,
     teamHold: ratio(holds, holdOpps),
     teamBreak: ratio(breaks, breakOpps),

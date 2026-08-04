@@ -34,6 +34,8 @@ type Column = {
   roleKey?: keyof RoleRelative;
   /** How the role-relative gap is rendered: a rate delta or a raw delta. */
   roleFormat?: "pp" | "number";
+  /** Metrics where less is more — turnovers. Flips the colouring. */
+  lowerIsBetter?: boolean;
 };
 
 type Dir = "asc" | "desc";
@@ -41,6 +43,11 @@ type Dir = "asc" | "desc";
 type Baseline = "absolute" | "role";
 
 type RoleFilter = Role | "ALL";
+
+/** Tone for a metric where a bigger number is a worse number. */
+function toneAgainst(value: number | null): string | undefined {
+  return toneFor(value === null ? null : -value);
+}
 
 /** Sorts nulls last regardless of direction by pushing them to -Infinity. */
 function nullLast(value: number | null): number {
@@ -131,6 +138,20 @@ const COLUMNS: Column[] = [
     sortValue: (p: PlayerAdvanced) => nullLast(p.blocksPerDPoint),
   },
   {
+    key: "to",
+    label: "TO/pt",
+    title: "Drops and throwaways per point played — lower is better",
+    width: "w-14",
+    display: (p: PlayerAdvanced) =>
+      p.turnoverRate === null ? "–" : p.turnoverRate.toFixed(2),
+    sortValue: (p: PlayerAdvanced) => nullLast(p.turnoverRate),
+    tone: (p: PlayerAdvanced) =>
+      p.turnovers > 0 ? "text-amber-600" : undefined,
+    roleKey: "turnoverRate",
+    roleFormat: "number",
+    lowerIsBetter: true,
+  },
+  {
     key: "inv",
     label: "Inv",
     title: "Share of on-field points where this player scored or assisted",
@@ -139,6 +160,15 @@ const COLUMNS: Column[] = [
     sortValue: (p: PlayerAdvanced) => nullLast(p.involvement),
     roleKey: "involvement",
     roleFormat: "pp",
+  },
+  {
+    key: "chain",
+    label: "Chain",
+    title:
+      "Scoring-chain credits per point played: goals, assists and hockey assists together",
+    width: "w-14",
+    display: (p: PlayerAdvanced) => pct(p.chainInvolvement),
+    sortValue: (p: PlayerAdvanced) => nullLast(p.chainInvolvement),
   },
 ];
 
@@ -350,8 +380,13 @@ export function PlayersTable({
                 {COLUMNS.map((c: Column) => {
                   const roleMode = baseline === "role" && Boolean(c.roleKey);
                   const value = roleMode ? roleDisplay(p, c) : c.display(p);
+                  const gap = roleMode
+                    ? p.roleRelative[c.roleKey as keyof RoleRelative]
+                    : null;
                   const tone = roleMode
-                    ? toneFor(p.roleRelative[c.roleKey as keyof RoleRelative])
+                    ? c.lowerIsBetter
+                      ? toneAgainst(gap)
+                      : toneFor(gap)
                     : c.tone?.(p);
                   return (
                     <span

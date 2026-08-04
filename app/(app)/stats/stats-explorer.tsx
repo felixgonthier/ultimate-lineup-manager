@@ -18,14 +18,16 @@ import {
   type StatsPayload,
 } from "@/lib/advanced-stats";
 import { PlayersTable } from "./players-table";
+import { CountsTable } from "./counts-table";
 import { PairsTable } from "./pairs-table";
 import { RolesPanel } from "./roles-panel";
 import { GamesPanel } from "./games-panel";
 
-type Tab = "players" | "pairs" | "roles" | "games";
+type Tab = "players" | "counts" | "pairs" | "roles" | "games";
 
 const TABS: { id: Tab; label: string }[] = [
   { id: "players", label: "Players" },
+  { id: "counts", label: "Counts" },
   { id: "pairs", label: "Pairs" },
   { id: "roles", label: "Roles" },
   { id: "games", label: "Games" },
@@ -362,6 +364,8 @@ export function StatsExplorer({ payload }: { payload: StatsPayload }) {
         </Card>
       ) : tab === "players" ? (
         <PlayersTable players={computed.players} minPoints={opts.minPoints} />
+      ) : tab === "counts" ? (
+        <CountsTable players={computed.players} />
       ) : tab === "pairs" ? (
         <PairsTable pairs={computed.pairs} minPoints={opts.minPoints} />
       ) : tab === "roles" ? (

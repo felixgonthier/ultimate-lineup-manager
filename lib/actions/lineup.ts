@@ -11,26 +11,27 @@ import {
 } from "@/lib/lineup-ratings";
 
 /** Only competitive games say anything useful about who converts under pressure. */
-const RATED_DIFFICULTIES = ["EVEN", "TOUGH"] as const;
+const RATED_DIFFICULTIES: string[] = ["EVEN", "TOUGH"];
+
+export type LineupIntel = {
+  /** Absolute hold/break rates, so only competitive games count. */
+  ratings: Record<string, CandidateRatings>;
+};
 
 /**
- * Hold/break ratings for a team, cached until a point is recorded.
+ * Line-calling intel for a team, cached until a point is recorded.
  *
  * The team lookup deliberately stays outside the cached scope: reading cookies
  * inside one is unsupported, so the resolved `teamId` is passed in as the cache
  * key instead. `revalidateTag` in `recordPoint`/`deleteLastPoint` clears it.
  */
-const loadRatings = (teamId: string) =>
+const loadIntel = (teamId: string) =>
   unstable_cache(
-    async (): Promise<Record<string, CandidateRatings>> => {
+    async (): Promise<LineupIntel> => {
       const [points, players] = await Promise.all([
         prisma.point.findMany({
           where: {
-            game: {
-              tournament: { teamId },
-              excludeFromStats: false,
-              difficulty: { in: [...RATED_DIFFICULTIES] },
-            },
+            game: { tournament: { teamId }, excludeFromStats: false },
           },
           select: {
             ourOffense: true,
@@ -38,7 +39,11 @@ const loadRatings = (teamId: string) =>
             callahan: true,
             goalPlayerId: true,
             assistPlayerId: true,
-            players: { select: { playerId: true, blocks: true } },
+            hockeyAssistPlayerId: true,
+            players: {
+              select: { playerId: true, blocks: true, turnovers: true },
+            },
+            game: { select: { difficulty: true } },
           },
         }),
         prisma.player.findMany({
@@ -47,18 +52,25 @@ const loadRatings = (teamId: string) =>
         }),
       ]);
 
-      if (points.length === 0) return {};
-      return buildLineupRatings(
-        computePlayerStatsFromPoints(points, players),
+      if (points.length === 0) return { ratings: {} };
+
+      const rated = points.filter((pt: (typeof points)[number]) =>
+        pt.game.difficulty
+          ? RATED_DIFFICULTIES.includes(pt.game.difficulty)
+          : false,
       );
+
+      return {
+        ratings: buildLineupRatings(
+          computePlayerStatsFromPoints(rated, players),
+        ),
+      };
     },
-    ["lineup-ratings", teamId],
+    ["lineup-intel", teamId],
     { tags: [ratingsCacheTag(teamId)] },
   );
 
-export async function getLineupRatings(): Promise<
-  Record<string, CandidateRatings>
-> {
+export async function getLineupIntel(): Promise<LineupIntel> {
   const { team } = await requireTeam();
-  return loadRatings(team.id)();
+  return loadIntel(team.id)();
 }

@@ -113,7 +113,8 @@ export async function getTournamentPlayerStats(tournamentId: string): Promise<Pl
       callahan: true,
       goalPlayerId: true,
       assistPlayerId: true,
-      players: { select: { playerId: true, blocks: true } },
+      hockeyAssistPlayerId: true,
+      players: { select: { playerId: true, blocks: true, turnovers: true } },
     },
   });
 
@@ -122,6 +123,7 @@ export async function getTournamentPlayerStats(tournamentId: string): Promise<Pl
     for (const pp of pt.players) playerIds.add(pp.playerId);
     if (pt.goalPlayerId) playerIds.add(pt.goalPlayerId);
     if (pt.assistPlayerId) playerIds.add(pt.assistPlayerId);
+    if (pt.hockeyAssistPlayerId) playerIds.add(pt.hockeyAssistPlayerId);
   }
   if (playerIds.size === 0) return [];
 
@@ -156,7 +158,8 @@ export async function getTournamentGroupStats(tournamentId: string): Promise<Gro
       callahan: true,
       goalPlayerId: true,
       assistPlayerId: true,
-      players: { select: { playerId: true, blocks: true } },
+      hockeyAssistPlayerId: true,
+      players: { select: { playerId: true, blocks: true, turnovers: true } },
     },
   });
 

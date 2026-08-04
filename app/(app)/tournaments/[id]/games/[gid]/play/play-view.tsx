@@ -49,15 +49,27 @@ import {
   UserX,
   Users,
   Shield,
+  Undo2,
   Wind,
   SlidersHorizontal,
 } from "lucide-react";
+
+/** One link of the scoring chain. Order is the order they get filled in. */
+type ChainSlot = "goal" | "assist" | "hockeyAssist";
+
+const CHAIN_SLOTS: { slot: ChainSlot; label: string; tag: string }[] = [
+  { slot: "goal", label: "Goal", tag: "G" },
+  { slot: "assist", label: "Assist", tag: "A" },
+  { slot: "hockeyAssist", label: "2nd", tag: "HA" },
+];
 
 /** What a player has done in this game — the "right now" read on a name. */
 export type GameImpact = {
   goals: number;
   assists: number;
+  hockeyAssists: number;
   blocks: number;
+  turnovers: number;
   /** Offence points on the field, and how many were held. */
   holds: number;
   holdOpps: number;
@@ -79,6 +91,8 @@ export type PlayerForm = {
   /** Goals plus assists. A player cannot have both on one point, so this is
    *  also the count of points they finished. */
   scores: number;
+  /** Drops and throwaways charged across the tournament. */
+  turnovers: number;
   pointsPlayed: number;
 };
 
@@ -141,9 +155,7 @@ function RoleTag({ role, compact }: { role: string; compact?: boolean }) {
     <span
       className={cn(
         "shrink-0 rounded font-medium",
-        compact
-          ? "text-[7px] px-1 py-[1px]"
-          : "text-[10px] px-1.5 py-0.5",
+        compact ? "text-[7px] px-1 py-[1px]" : "text-[10px] px-1.5 py-0.5",
         ROLE_TONE[role as PlayerRole],
       )}
       title={ROLE_LABEL[role as PlayerRole]}
@@ -181,20 +193,40 @@ const RUNG_ORDER: Rung[] = [
   "FULL_PUSH",
 ];
 
-/** On-field flags for the last few points — game fatigue at a glance. */
+/**
+ * On-field flags for the last few points — game fatigue at a glance. The bar is
+ * always the full window wide so every player's load reads against the same
+ * ruler; points that have not happened yet are empty outlines.
+ */
+const FATIGUE_WINDOW = 9;
+
 function FatigueDots({ recent }: { recent: boolean[] }) {
-  if (recent.length === 0) return null;
+  const played = recent.slice(-FATIGUE_WINDOW);
+  const pending = FATIGUE_WINDOW - played.length;
+  // null marks a slot with no point behind it yet.
+  const slots: (boolean | null)[] = [
+    ...Array.from({ length: pending }, () => null),
+    ...played,
+  ];
   return (
     <span
       className="flex items-center gap-[2px] shrink-0"
-      title={`Last ${recent.length} points — filled means on the field`}
+      title={
+        played.length === 0
+          ? `Last ${FATIGUE_WINDOW} points — no points played yet`
+          : `Last ${played.length} point${played.length === 1 ? "" : "s"} — filled means on the field`
+      }
     >
-      {recent.map((on: boolean, i: number) => (
+      {slots.map((on: (typeof slots)[number], i: number) => (
         <span
           key={i}
           className={cn(
             "h-2 w-[3px] rounded-full",
-            on ? "bg-foreground/60" : "bg-foreground/15",
+            on === null
+              ? "border border-foreground/10"
+              : on
+                ? "bg-foreground/60"
+                : "bg-foreground/15",
           )}
         />
       ))}
@@ -203,19 +235,40 @@ function FatigueDots({ recent }: { recent: boolean[] }) {
 }
 
 /**
+ * Whether a player has anything to show for this game yet. The row asks before
+ * it lays out a line for the strip: an empty stat line is dead space, and at 0–0
+ * every row would have one.
+ */
+function hasGameImpact(impact: GameImpact | undefined): boolean {
+  if (!impact) return false;
+  return (
+    impact.holdOpps > 0 ||
+    impact.breakOpps > 0 ||
+    impact.turnovers > 0 ||
+    impact.goals > 0 ||
+    impact.assists > 0 ||
+    impact.hockeyAssists > 0 ||
+    impact.blocks > 0
+  );
+}
+
+/** Same question for the tournament-so-far line. */
+function hasForm(form: PlayerForm | undefined): boolean {
+  return form !== undefined && form.pointsPlayed > 0;
+}
+
+/**
  * What the team did with this player on the field. Conversion split by O and D
  * beats a single plus-minus: a handler at 5/5 holding and a defender at 2/3
  * breaking are both excellent, and one number would hide that.
  */
 function ImpactStrip({ impact }: { impact: GameImpact | undefined }) {
-  if (!impact) return null;
+  if (!hasGameImpact(impact) || !impact) return null;
   const credits: string[] = [];
   if (impact.goals > 0) credits.push(`${impact.goals}G`);
   if (impact.assists > 0) credits.push(`${impact.assists}A`);
+  if (impact.hockeyAssists > 0) credits.push(`${impact.hockeyAssists}HA`);
   if (impact.blocks > 0) credits.push(`${impact.blocks}D`);
-  if (impact.holdOpps === 0 && impact.breakOpps === 0 && credits.length === 0) {
-    return null;
-  }
   return (
     <span className="flex items-center gap-1.5 shrink-0 tabular-nums">
       {impact.holdOpps > 0 && (
@@ -249,6 +302,14 @@ function ImpactStrip({ impact }: { impact: GameImpact | undefined }) {
           {credits.join(" ")}
         </span>
       )}
+      {impact.turnovers > 0 && (
+        <span
+          className="font-medium text-amber-600"
+          title={`${impact.turnovers} turnover${impact.turnovers === 1 ? "" : "s"} charged this game`}
+        >
+          {impact.turnovers}TO
+        </span>
+      )}
     </span>
   );
 }
@@ -264,7 +325,7 @@ function pct(n: number, d: number): string {
  * a zero — no opportunities is not the same as failed opportunities.
  */
 function FormStrip({ form }: { form: PlayerForm | undefined }) {
-  if (!form || form.pointsPlayed === 0) return null;
+  if (!hasForm(form) || !form) return null;
   const items: { key: string; value: string; label: string; title: string }[] =
     [];
 
@@ -284,28 +345,31 @@ function FormStrip({ form }: { form: PlayerForm | undefined }) {
       title: `Broke ${form.breaks} of ${form.breakOpps} defence points this tournament`,
     });
   }
-  if (form.dPoints > 0) {
-    items.push({
-      key: "blocks",
-      value: (form.blocks / form.dPoints).toFixed(1),
-      label: "D/pt",
-      title: `${form.blocks} block${form.blocks === 1 ? "" : "s"} over ${form.dPoints} defence points — defensive work rate`,
-    });
-  }
   items.push({
     key: "scores",
     value: pct(form.scores, form.pointsPlayed),
     label: "scored",
     title: `Threw or caught the goal on ${form.scores} of the ${form.pointsPlayed} points they played`,
   });
+  // Only worth the width once it has happened — a 0% giveaway rate is the
+  // default state, not news.
+  if (form.turnovers > 0) {
+    items.push({
+      key: "turnovers",
+      value: (form.turnovers / form.pointsPlayed).toFixed(2),
+      label: "TO/pt",
+      title: `${form.turnovers} turnover${form.turnovers === 1 ? "" : "s"} over ${form.pointsPlayed} points this tournament`,
+    });
+  }
 
   return (
-    <span className="flex items-center gap-1.5 shrink-0 tabular-nums">
-      <span className="text-[9px] uppercase tracking-wider text-foreground/30">
-        day
-      </span>
+    <span className="flex items-center gap-1.5 min-w-0 truncate tabular-nums">
       {items.map((it: (typeof items)[number]) => (
-        <span key={it.key} title={it.title} className="text-foreground/60">
+        <span
+          key={it.key}
+          title={it.title}
+          className="shrink-0 whitespace-nowrap text-foreground/60"
+        >
           {it.value}{" "}
           <span className="font-normal text-muted-foreground">{it.label}</span>
         </span>
@@ -321,7 +385,10 @@ function ReasonChips({ reasons }: { reasons: Reason[] }) {
       {reasons.map((r: Reason, i: number) => (
         <span key={r.label} className="flex items-center gap-1 shrink-0">
           {i > 0 && <span className="text-foreground/20">·</span>}
-          <span title={r.detail} className={cn("whitespace-nowrap", REASON_TONES[r.tone])}>
+          <span
+            title={r.detail}
+            className={cn("whitespace-nowrap", REASON_TONES[r.tone])}
+          >
             {r.label}
           </span>
         </span>
@@ -379,7 +446,12 @@ export function PlayView({
   const [scoredByUs, setScoredByUs] = useState<boolean | null>(null);
   const [assistId, setAssistId] = useState<string | null>(null);
   const [goalId, setGoalId] = useState<string | null>(null);
+  const [hockeyAssistId, setHockeyAssistId] = useState<string | null>(null);
+  // Which link the next name tap fills, when the caller has pointed at one.
+  // null means "let the chain decide" — see activeSlot.
+  const [chainTarget, setChainTarget] = useState<ChainSlot | null>(null);
   const [blocks, setBlocks] = useState<Record<string, number>>({});
+  const [turnovers, setTurnovers] = useState<Record<string, number>>({});
   const [submitting, setSubmitting] = useState(false);
   const [subbingOutId, setSubbingOutId] = useState<string | null>(null);
   const [injuredIds, setInjuredIds] = useState<Set<string>>(new Set());
@@ -415,6 +487,67 @@ export function PlayView({
       delete next[id];
       return next;
     });
+  }
+
+  function clearTurnovers(id: string) {
+    setTurnovers((prev) => {
+      if (!prev[id]) return prev;
+      const next = { ...prev };
+      delete next[id];
+      return next;
+    });
+  }
+
+  function addTurnover(id: string) {
+    setTurnovers((prev) => ({ ...prev, [id]: (prev[id] ?? 0) + 1 }));
+  }
+
+  // The chain fills front to back, and falls back to the first empty link.
+  // Deriving it rather than tracking it means anything that empties a slot —
+  // an injury, a sub, submitting the point — re-opens it for free. A hockey
+  // assist behind no assist is not a thing, and the ordering gives that too:
+  // the 2nd slot is only ever reached with the assist already in.
+  const activeSlot: ChainSlot | null =
+    chainTarget ??
+    (!goalId
+      ? "goal"
+      : !assistId
+        ? "assist"
+        : !hockeyAssistId
+          ? "hockeyAssist"
+          : null);
+
+  const activeSlotLabel =
+    CHAIN_SLOTS.find(({ slot }) => slot === activeSlot)?.label ?? null;
+
+  function chainHolder(slot: ChainSlot): string | null {
+    if (slot === "goal") return goalId;
+    if (slot === "assist") return assistId;
+    return hockeyAssistId;
+  }
+
+  function assignChain(playerId: string) {
+    if (!activeSlot) return;
+    if (activeSlot === "hockeyAssist" && !assistId) return;
+    // One player, one link — taking a slot gives up whichever they held. Nobody
+    // throws to themself, so this is a rule and not just tidiness.
+    if (goalId === playerId) setGoalId(null);
+    if (assistId === playerId) setAssistId(null);
+    if (hockeyAssistId === playerId) setHockeyAssistId(null);
+    if (activeSlot === "goal") setGoalId(playerId);
+    else if (activeSlot === "assist") setAssistId(playerId);
+    else setHockeyAssistId(playerId);
+    setChainTarget(null);
+  }
+
+  function clearChain(slot: ChainSlot) {
+    if (slot === "goal") setGoalId(null);
+    else if (slot === "assist") {
+      setAssistId(null);
+      // The pass before an assist that no longer exists isn't one either.
+      setHockeyAssistId(null);
+    } else setHockeyAssistId(null);
+    setChainTarget(slot);
   }
 
   // A goal with no assist can only have been a callahan — never asked, always derived.
@@ -454,7 +587,9 @@ export function PlayView({
       });
       if (assistId === id) setAssistId(null);
       if (goalId === id) setGoalId(null);
+      if (hockeyAssistId === id) setHockeyAssistId(null);
       clearBlocks(id);
+      clearTurnovers(id);
     }
   }
 
@@ -485,19 +620,17 @@ export function PlayView({
 
   const hasRatings = Object.keys(ratings).length > 0;
 
-  const candidates = visiblePlayers.map(
-    (p: Player): Candidate => ({
-      id: p.id,
-      role: p.role as Role,
-      pool: p.pool,
-      tier: p.tier,
-      variance: p.variance,
-      ratings: ratings[p.id],
-      gamePoints: p.pointCount,
-      tournamentPoints: p.tournamentPointCount,
-      streak: consecutiveCounts[p.id] ?? 0,
-    }),
-  );
+  const candidates = visiblePlayers.map((p: Player): Candidate => ({
+    id: p.id,
+    role: p.role as Role,
+    pool: p.pool,
+    tier: p.tier,
+    variance: p.variance,
+    ratings: ratings[p.id],
+    gamePoints: p.pointCount,
+    tournamentPoints: p.tournamentPointCount,
+    streak: consecutiveCounts[p.id] ?? 0,
+  }));
 
   // Derived every render rather than memoised: it depends on injuries, line
   // overrides, mode, rung and wind, and a stale memo here used to recommend
@@ -584,7 +717,9 @@ export function PlayView({
     });
     if (assistId === outId) setAssistId(null);
     if (goalId === outId) setGoalId(null);
+    if (hockeyAssistId === outId) setHockeyAssistId(null);
     clearBlocks(outId);
+    clearTurnovers(outId);
     setSubbingOutId(null);
   }
 
@@ -601,9 +736,13 @@ export function PlayView({
       rung: mode === "FAIR" ? null : suggestion.rung,
       playerIds: Array.from(selectedIds),
       blocks,
+      turnovers,
       scoredByUs,
       assistPlayerId: scoredByUs && assistId ? assistId : undefined,
       goalPlayerId: scoredByUs && goalId ? goalId : undefined,
+      // A hockey assist without an assist in front of it is not a thing.
+      hockeyAssistPlayerId:
+        scoredByUs && assistId && hockeyAssistId ? hockeyAssistId : undefined,
     });
 
     setLastLineupIds(new Set(selectedIds));
@@ -620,7 +759,10 @@ export function PlayView({
     setScoredByUs(null);
     setAssistId(null);
     setGoalId(null);
+    setHockeyAssistId(null);
+    setChainTarget(null);
     setBlocks({});
+    setTurnovers({});
     setSubbingOutId(null);
     setSubmitting(false);
   }
@@ -641,18 +783,15 @@ export function PlayView({
   // The number that actually says who is winning the game: holds are expected,
   // breaks are what move the scoreboard.
   const breakDiff = breaks.us - breaks.them;
-  // One line of context that answers "what is this point?" without a tap.
-  const pointContext = [
-    `Pt ${nextPointNumber}`,
-    ourOffense ? "Offense" : "Defense",
-    windLabel,
+  const breakLabel =
     breakDiff === 0
-      ? "on serve"
-      : `${breakDiff > 0 ? "+" : ""}${breakDiff} break${Math.abs(breakDiff) === 1 ? "" : "s"}`,
-    run ? `${run.count} straight ${run.byUs ? "for us" : "against"}` : null,
-  ]
-    .filter(Boolean)
-    .join(" · ");
+      ? "On serve"
+      : `${breakDiff > 0 ? "+" : ""}${breakDiff} break${Math.abs(breakDiff) === 1 ? "" : "s"}`;
+  // A "run" of one is just the previous point — only a streak is worth saying.
+  const runLabel =
+    run && run.count >= 2
+      ? `${run.count} straight ${run.byUs ? "for us" : "against"}`
+      : null;
 
   return (
     <>
@@ -690,9 +829,64 @@ export function PlayView({
                 <p className="text-sm text-muted-foreground mt-2">
                   vs {game.opponentName}
                 </p>
-                <p className="text-[11px] text-muted-foreground mt-0.5 tabular-nums">
-                  {pointContext}
-                </p>
+                {/* What this point is, as chips — the two things that shape the
+                    call (phase, wind) read as state, the two that describe the
+                    game (breaks, run) read as a score. */}
+                <div className="mt-2.5 flex flex-wrap items-center justify-center gap-x-1.5 gap-y-1 text-[11px] tabular-nums">
+                  <span className="font-semibold text-muted-foreground">
+                    Pt {nextPointNumber}
+                  </span>
+                  <span
+                    className={cn(
+                      "px-1.5 py-[1px] rounded-full border text-[10px] font-bold uppercase tracking-wide",
+                      ourOffense
+                        ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                        : "border-sky-300 bg-sky-50 text-sky-700",
+                    )}
+                  >
+                    {ourOffense ? "Offense" : "Defense"}
+                  </span>
+                  {windLabel && (
+                    <span
+                      className={cn(
+                        "flex items-center gap-0.5 px-1.5 py-[1px] rounded-full border text-[10px] font-semibold",
+                        attackingUpwind
+                          ? "border-orange-300 bg-orange-50 text-orange-700"
+                          : "border-emerald-300 bg-emerald-50 text-emerald-700",
+                      )}
+                    >
+                      <Wind className="h-2.5 w-2.5 shrink-0" />
+                      {windLabel}
+                    </span>
+                  )}
+                  <span className="text-foreground/20">·</span>
+                  <span
+                    className={cn(
+                      "font-bold",
+                      breakDiff > 0
+                        ? "text-emerald-600"
+                        : breakDiff < 0
+                          ? "text-red-500"
+                          : "text-muted-foreground",
+                    )}
+                    title={`${breaks.us} break${breaks.us === 1 ? "" : "s"} converted, ${breaks.them} conceded`}
+                  >
+                    {breakLabel}
+                  </span>
+                  {run && runLabel && (
+                    <>
+                      <span className="text-foreground/20">·</span>
+                      <span
+                        className={cn(
+                          "font-bold",
+                          run.byUs ? "text-emerald-600" : "text-red-500",
+                        )}
+                      >
+                        {runLabel}
+                      </span>
+                    </>
+                  )}
+                </div>
               </div>
             </div>
 
@@ -813,6 +1007,8 @@ export function PlayView({
                     setScoredByUs(false);
                     setAssistId(null);
                     setGoalId(null);
+                    setHockeyAssistId(null);
+                    setChainTarget(null);
                   }}
                   className={cn(
                     "py-5 rounded-2xl border-2 font-bold text-base transition-all flex items-center justify-center gap-2",
@@ -826,7 +1022,88 @@ export function PlayView({
               </div>
             </div>
 
-            {/* Per-player credit — D always, assist/goal once we know we scored */}
+            {/* The scoring chain is three facts about the point, not a column
+                per player — so it gets three slots, filled by tapping a name. */}
+            {scoredByUs === true && (
+              <div className="space-y-2">
+                <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  Scoring chain
+                </p>
+                <div className="grid grid-cols-3 gap-2">
+                  {CHAIN_SLOTS.map(({ slot, label }) => {
+                    const holderId = chainHolder(slot);
+                    const holder = holderId
+                      ? players.find((p) => p.id === holderId)
+                      : undefined;
+                    const isActive = activeSlot === slot;
+                    // Nothing to be the pass before until there is an assist.
+                    const locked = slot === "hockeyAssist" && !assistId;
+                    return (
+                      <div key={slot} className="min-w-0">
+                        <p
+                          className={cn(
+                            "mb-1 text-center text-[10px] font-semibold uppercase tracking-wider transition-colors",
+                            isActive ? "text-primary" : "text-muted-foreground",
+                            locked && "opacity-50",
+                          )}
+                        >
+                          {label}
+                        </p>
+                        <div className="relative">
+                          <button
+                            onClick={() => setChainTarget(slot)}
+                            disabled={locked}
+                            className={cn(
+                              "w-full h-12 rounded-xl border-2 px-2 truncate transition-all",
+                              holder
+                                ? "border-primary bg-primary text-primary-foreground text-sm font-bold"
+                                : isActive
+                                  ? "border-dashed border-primary bg-primary/5 text-primary text-[11px] font-semibold"
+                                  : "border-dashed border-input text-muted-foreground/60 text-[11px] font-semibold",
+                              locked && "opacity-50",
+                            )}
+                            title={
+                              locked
+                                ? "Pick the assist first"
+                                : holder
+                                  ? `${holder.name} — tap to pick someone else`
+                                  : `Set the ${label.toLowerCase()}`
+                            }
+                          >
+                            {holder
+                              ? holder.name
+                              : isActive
+                                ? "Tap a name"
+                                : "—"}
+                          </button>
+                          {holder && (
+                            <button
+                              onClick={() => clearChain(slot)}
+                              className="absolute -top-1.5 -right-1.5 h-5 w-5 rounded-full border bg-background shadow-sm flex items-center justify-center text-muted-foreground"
+                              title={`Clear the ${label.toLowerCase()}`}
+                            >
+                              <X className="h-3 w-3" />
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <p className="px-0.5 text-[11px] text-muted-foreground">
+                  {activeSlot === "goal"
+                    ? "Tap a player's name below to set the goal."
+                    : activeSlot === "assist"
+                      ? "Tap the assist — or leave it empty for a callahan."
+                      : activeSlot === "hockeyAssist"
+                        ? "Optional: tap the pass before the assist."
+                        : "Chain complete. Tap a slot above to change it."}
+                </p>
+              </div>
+            )}
+
+            {/* Per-player counters — these really are per player, so they stay
+                as columns. */}
             <div className="space-y-0.5">
               <div className="flex items-center gap-1 px-1 pb-1">
                 <span className="flex-1" />
@@ -834,38 +1111,64 @@ export function PlayView({
                 <span className="w-10 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
                   D
                 </span>
-                {scoredByUs === true && (
-                  <span className="w-10 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    Ast
-                  </span>
-                )}
-                {scoredByUs === true && (
-                  <span className="w-10 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
-                    Goal
-                  </span>
-                )}
+                <span className="w-10 text-center text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+                  TO
+                </span>
               </div>
               {selectedPlayers.map((p) => {
-                const isAssist = assistId === p.id;
-                const isGoal = goalId === p.id;
                 const blockCount = shownBlocks(p.id);
-                const canClearBlocks = (blocks[p.id] ?? 0) > 0;
+                const turnoverCount = turnovers[p.id] ?? 0;
+                const canClear = (blocks[p.id] ?? 0) > 0 || turnoverCount > 0;
+                const chainTag = CHAIN_SLOTS.find(
+                  ({ slot }) => chainHolder(slot) === p.id,
+                )?.tag;
                 return (
-                  <div key={p.id} className="flex items-center gap-1 px-1 py-1">
-                    <span className="flex-1 text-sm font-medium truncate">
-                      {p.name}
-                    </span>
+                  <div
+                    key={p.id}
+                    className="flex items-center gap-1 px-1 py-0.5"
+                  >
+                    {scoredByUs === true ? (
+                      <button
+                        onClick={() => assignChain(p.id)}
+                        disabled={!activeSlot}
+                        className={cn(
+                          "flex-1 min-w-0 h-9 px-1.5 rounded-lg flex items-center gap-1.5 text-left transition-colors",
+                          activeSlot && "hover:bg-accent active:bg-accent",
+                        )}
+                        title={
+                          activeSlotLabel
+                            ? `Credit ${p.name} with the ${activeSlotLabel.toLowerCase()}`
+                            : undefined
+                        }
+                      >
+                        <span className="text-sm font-medium truncate">
+                          {p.name}
+                        </span>
+                        {chainTag && (
+                          <span className="shrink-0 rounded bg-primary/15 px-1 py-0.5 text-[10px] font-bold leading-none text-primary">
+                            {chainTag}
+                          </span>
+                        )}
+                      </button>
+                    ) : (
+                      <span className="flex-1 px-1.5 text-sm font-medium truncate">
+                        {p.name}
+                      </span>
+                    )}
                     <button
-                      onClick={() => clearBlocks(p.id)}
+                      onClick={() => {
+                        clearBlocks(p.id);
+                        clearTurnovers(p.id);
+                      }}
                       className={cn(
                         "w-5 h-8 text-muted-foreground shrink-0 transition-opacity",
-                        canClearBlocks
+                        canClear
                           ? "opacity-100"
                           : "opacity-0 pointer-events-none",
                       )}
-                      tabIndex={canClearBlocks ? 0 : -1}
-                      aria-hidden={!canClearBlocks}
-                      title={`Clear ${p.name}'s Ds`}
+                      tabIndex={canClear ? 0 : -1}
+                      aria-hidden={!canClear}
+                      title={`Clear ${p.name}'s Ds and turnovers`}
                     >
                       <X className="h-3.5 w-3.5 mx-auto" />
                     </button>
@@ -878,7 +1181,7 @@ export function PlayView({
                           : "border-input text-muted-foreground hover:bg-accent",
                       )}
                       title={
-                        impliedBlocks(p.id) > 0 && !canClearBlocks
+                        impliedBlocks(p.id) > 0 && (blocks[p.id] ?? 0) === 0
                           ? "Callahan — block credited automatically"
                           : blockCount > 0
                             ? `${blockCount} D${blockCount > 1 ? "s" : ""} — tap to add another`
@@ -890,38 +1193,25 @@ export function PlayView({
                         <span className="tabular-nums">{blockCount}</span>
                       )}
                     </button>
-                    {scoredByUs === true && (
-                      <button
-                        onClick={() => {
-                          setAssistId(isAssist ? null : p.id);
-                          if (!isAssist && goalId === p.id) setGoalId(null);
-                        }}
-                        className={cn(
-                          "w-10 h-8 rounded-lg text-xs font-bold border-2 transition-all shrink-0",
-                          isAssist
-                            ? "border-primary bg-primary text-primary-foreground"
-                            : "border-input text-muted-foreground hover:bg-accent",
-                        )}
-                      >
-                        A
-                      </button>
-                    )}
-                    {scoredByUs === true && (
-                      <button
-                        onClick={() => {
-                          setGoalId(isGoal ? null : p.id);
-                          if (!isGoal && assistId === p.id) setAssistId(null);
-                        }}
-                        className={cn(
-                          "w-10 h-8 rounded-lg text-xs font-bold border-2 transition-all shrink-0",
-                          isGoal
-                            ? "border-primary bg-primary text-primary-foreground"
-                            : "border-input text-muted-foreground hover:bg-accent",
-                        )}
-                      >
-                        G
-                      </button>
-                    )}
+                    <button
+                      onClick={() => addTurnover(p.id)}
+                      className={cn(
+                        "w-10 h-8 rounded-lg text-xs font-bold border-2 transition-all shrink-0 flex items-center justify-center gap-0.5",
+                        turnoverCount > 0
+                          ? "border-amber-500 bg-amber-500 text-white"
+                          : "border-input text-muted-foreground hover:bg-accent",
+                      )}
+                      title={
+                        turnoverCount > 0
+                          ? `${turnoverCount} turnover${turnoverCount > 1 ? "s" : ""} — tap to add another`
+                          : "Charge a drop or throwaway"
+                      }
+                    >
+                      <Undo2 className="h-3.5 w-3.5" />
+                      {turnoverCount > 1 && (
+                        <span className="tabular-nums">{turnoverCount}</span>
+                      )}
+                    </button>
                   </div>
                 );
               })}
@@ -988,8 +1278,6 @@ export function PlayView({
               {/* Row 2: point context · O/D toggle */}
               <div className="flex items-center justify-between gap-2">
                 <p className="flex items-center gap-1.5 text-[11px] font-medium text-muted-foreground tabular-nums truncate">
-                  <span>Pt {nextPointNumber}</span>
-                  <span className="text-foreground/20">·</span>
                   <span
                     className={cn(
                       "font-bold",
@@ -1001,13 +1289,9 @@ export function PlayView({
                     )}
                     title={`${breaks.us} break${breaks.us === 1 ? "" : "s"} converted, ${breaks.them} conceded`}
                   >
-                    {breakDiff > 0
-                      ? `+${breakDiff} break${breakDiff === 1 ? "" : "s"}`
-                      : breakDiff < 0
-                        ? `${breakDiff} break${breakDiff === -1 ? "" : "s"}`
-                        : "on serve"}
+                    {breakLabel}
                   </span>
-                  {run && (
+                  {run && runLabel && (
                     <>
                       <span className="text-foreground/20">·</span>
                       <span
@@ -1016,7 +1300,7 @@ export function PlayView({
                           run.byUs ? "text-emerald-600" : "text-red-500",
                         )}
                       >
-                        {run.count} straight {run.byUs ? "for us" : "against"}
+                        {runLabel}
                       </span>
                     </>
                   )}
@@ -1248,7 +1532,7 @@ export function PlayView({
                     key={player.id}
                     onClick={() => togglePlayer(player.id)}
                     className={cn(
-                      "w-full flex items-stretch gap-2.5 px-2.5 py-1 rounded-lg border text-left transition-colors active:scale-[0.995]",
+                      "w-full flex items-stretch gap-1.5 px-2.5 py-1 rounded-lg border text-left transition-colors active:scale-[0.995]",
                       selected
                         ? "border-foreground/60 bg-foreground/[0.04]"
                         : "border-border bg-card hover:bg-accent",
@@ -1266,7 +1550,9 @@ export function PlayView({
                       {selected && <Check className="h-2.5 w-2.5" />}
                     </span>
 
-                    <div className="flex-1 min-w-0">
+                    {/* Self-centred, so a row with nothing to say yet keeps the
+                        name level with the radio and the chips beside it. */}
+                    <div className="flex-1 min-w-0 self-center">
                       {/* Identity */}
                       <div className="flex items-center gap-1.5 min-w-0">
                         <span
@@ -1305,20 +1591,25 @@ export function PlayView({
                         )}
                       </div>
 
-                      {/* This game */}
-                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground overflow-hidden">
-                        <ImpactStrip impact={impact} />
-                        <ReasonChips reasons={reasons} />
-                      </div>
+                      {/* This game — omitted entirely before there is anything
+                          to put on it, rather than left as an empty line. */}
+                      {(hasGameImpact(impact) || reasons.length > 0) && (
+                        <div className="flex items-center gap-2 text-[10px] text-muted-foreground overflow-hidden">
+                          <ImpactStrip impact={impact} />
+                          <ReasonChips reasons={reasons} />
+                        </div>
+                      )}
 
                       {/* The day so far */}
-                      <div className="flex items-center gap-2 text-[10px] text-muted-foreground overflow-hidden">
-                        <FormStrip form={forms[player.id]} />
-                      </div>
+                      {hasForm(forms[player.id]) && (
+                        <div className="flex items-center gap-2 text-[10px] text-muted-foreground overflow-hidden">
+                          <FormStrip form={forms[player.id]} />
+                        </div>
+                      )}
                     </div>
 
                     {/* Tier and recent load, stacked to match the two text lines */}
-                    <span className="shrink-0 w-16 self-center flex flex-col items-end gap-1">
+                    <span className="shrink-0 self-center flex flex-col items-end gap-1">
                       <span className="flex items-center gap-1">
                         <TierChip tier={player.tier} />
                         <RoleTag role={player.role} compact />
@@ -1328,7 +1619,7 @@ export function PlayView({
 
                     {/* Share of play: this game over this tournament */}
                     <span
-                      className="shrink-0 w-12 self-center text-right tabular-nums leading-none"
+                      className="shrink-0 w-11 self-center text-right tabular-nums leading-none whitespace-nowrap"
                       title={`${player.pointCount} of ${gamePointTotal} points this game · ${player.tournamentPointCount} of ${tournamentPointTotal} this tournament`}
                     >
                       <span className="block text-sm font-semibold">
@@ -1341,7 +1632,6 @@ export function PlayView({
                         {player.tournamentPointCount}/{tournamentPointTotal}
                       </span>
                     </span>
-
                   </button>
                 );
               })}
@@ -1432,8 +1722,8 @@ export function PlayView({
                       </span>
                       <RoleTag role={p.role} />
                       <span className="text-[10px] text-muted-foreground tabular-nums">
-                        {p.pointCount}/{gamePointTotal} pt · {p.tournamentPointCount}/
-                        {tournamentPointTotal} tourn
+                        {p.pointCount}/{gamePointTotal} pt ·{" "}
+                        {p.tournamentPointCount}/{tournamentPointTotal} tourn
                       </span>
                     </div>
                     {lines.length > 0 && (
