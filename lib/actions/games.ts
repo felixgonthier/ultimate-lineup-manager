@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { prisma } from "@/lib/db";
 import {
   assertGameOwned,
+  assertPlayerOwned,
   assertTournamentOwned,
   requireTeam,
   requireUser,
@@ -100,10 +101,58 @@ export async function getGamePlayData(gameId: string) {
   const game = await getGame(gameId);
   if (!game) return null;
 
-  const teamPlayers = await prisma.player.findMany({
-    where: { teamId: game.tournament.team.id, active: true },
-    orderBy: [{ number: "asc" }, { name: "asc" }],
-  });
+  const [teamPlayers, absences] = await Promise.all([
+    prisma.player.findMany({
+      where: { teamId: game.tournament.team.id, active: true },
+      orderBy: [{ number: "asc" }, { name: "asc" }],
+    }),
+    prisma.gameAbsence.findMany({
+      where: { gameId },
+      select: { playerId: true },
+    }),
+  ]);
 
-  return { game, teamPlayers };
+  return {
+    game,
+    teamPlayers,
+    absentPlayerIds: absences.map(
+      (a: (typeof absences)[number]) => a.playerId,
+    ),
+  };
+}
+
+/**
+ * Sit a player out of this game, or bring them back in. A toggle rather than a
+ * whole-roster write so rapid taps in the roster sheet commute — they can land
+ * in any order and still agree with what the caller sees.
+ */
+export async function setGameAbsence(
+  gameId: string,
+  tournamentId: string,
+  playerId: string,
+  absent: boolean,
+) {
+  const { team } = await requireTeam();
+  await assertGameOwned(gameId, team.id);
+  await assertPlayerOwned(playerId, team.id);
+  if (absent) {
+    await prisma.gameAbsence.upsert({
+      where: { gameId_playerId: { gameId, playerId } },
+      create: { gameId, playerId },
+      update: {},
+    });
+  } else {
+    await prisma.gameAbsence.deleteMany({ where: { gameId, playerId } });
+  }
+  revalidatePath(`/tournaments/${tournamentId}/games/${gameId}`);
+  revalidatePath(`/tournaments/${tournamentId}/games/${gameId}/play`);
+}
+
+/** Everyone back in — the one bulk move worth a button. */
+export async function clearGameAbsences(gameId: string, tournamentId: string) {
+  const { team } = await requireTeam();
+  await assertGameOwned(gameId, team.id);
+  await prisma.gameAbsence.deleteMany({ where: { gameId } });
+  revalidatePath(`/tournaments/${tournamentId}/games/${gameId}`);
+  revalidatePath(`/tournaments/${tournamentId}/games/${gameId}/play`);
 }

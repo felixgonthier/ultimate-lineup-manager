@@ -35,7 +35,7 @@ export default async function PlayPage({
 
   if (!playData || playData.game.tournament.id !== tournamentId) notFound();
 
-  const { game, teamPlayers } = playData;
+  const { game, teamPlayers, absentPlayerIds } = playData;
   const lines = game.tournament.lines;
 
   // "Hot" players: 2+ contributions (goal or assist) in their last 4 points played
@@ -209,6 +209,7 @@ export default async function PlayPage({
         fairnessFloor: game.fairnessFloor,
       }}
       players={players}
+      initialUnavailableIds={absentPlayerIds}
       lines={lines.map((l: (typeof lines)[number]) => ({
         id: l.id,
         name: l.name,

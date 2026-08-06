@@ -4,6 +4,7 @@ import { useState, useTransition, useMemo } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { recordPoint, deleteLastPoint } from "@/lib/actions/points";
+import { setGameAbsence, clearGameAbsences } from "@/lib/actions/games";
 import { isCallahanPoint } from "@/lib/stats";
 import { explainCandidate, type Reason } from "@/lib/lineup-explain";
 import {
@@ -46,8 +47,10 @@ import {
   RefreshCw,
   ArrowLeftRight,
   Timer,
-  UserX,
+  UserMinus,
+  UserPlus,
   Users,
+  AlertTriangle,
   Shield,
   Undo2,
   Wind,
@@ -127,6 +130,9 @@ type Game = {
 };
 
 type Step = "select" | "outcome";
+
+/** The roster sheet does two unrelated jobs, so it gets two panes. */
+type ManageTab = "availability" | "lines";
 
 const TIER_ABBR: Record<Tier, string> = {
   STAR: "STAR",
@@ -397,9 +403,102 @@ function ReasonChips({ reasons }: { reasons: Reason[] }) {
   );
 }
 
+/** How many names are sat, on the button that opens the sheet. */
+function OutBadge({ count }: { count: number }) {
+  return (
+    <span
+      className="absolute -top-0.5 -right-0.5 min-w-3.5 h-3.5 px-[3px] rounded-full bg-red-500 text-white text-[9px] font-bold leading-[14px] text-center tabular-nums"
+      title={`${count} player${count === 1 ? "" : "s"} sitting out`}
+    >
+      {count}
+    </span>
+  );
+}
+
+/**
+ * One half of the availability pane. Names are chips rather than rows so the
+ * whole squad fits on one screen — the old list meant scrolling to find someone
+ * and then hitting a 16px icon, which is the wrong shape for a decision made
+ * between points with cold hands. Tapping a chip moves it to the other section.
+ */
+function AvailabilitySection({
+  title,
+  players,
+  out,
+  gamePointTotal,
+  onToggle,
+  emptyLabel,
+}: {
+  title: string;
+  players: Player[];
+  /** Whether this section holds the players sitting out. */
+  out: boolean;
+  gamePointTotal: number;
+  onToggle: (id: string) => void;
+  emptyLabel: string;
+}) {
+  const Icon = out ? UserPlus : UserMinus;
+  return (
+    <div className="space-y-1.5">
+      <p className="text-[10px] font-semibold uppercase tracking-wider text-muted-foreground">
+        {title}{" "}
+        <span className="tabular-nums text-foreground/50">
+          {players.length}
+        </span>
+      </p>
+      {players.length === 0 ? (
+        <p className="text-xs text-muted-foreground">{emptyLabel}</p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5">
+          {players.map((p: Player) => (
+            <button
+              key={p.id}
+              onClick={() => onToggle(p.id)}
+              title={
+                out
+                  ? `Bring ${p.name} back in`
+                  : `Sit ${p.name} out of this game`
+              }
+              className={cn(
+                "min-h-11 px-2.5 rounded-xl border flex items-center gap-1.5 transition-colors active:scale-[0.98]",
+                out
+                  ? "border-red-200 bg-red-50 text-red-700 hover:bg-red-100"
+                  : "border-border bg-card hover:bg-accent",
+              )}
+            >
+              <span
+                className={cn(
+                  "text-sm font-medium",
+                  out && "line-through decoration-red-400",
+                )}
+              >
+                {p.name}
+              </span>
+              <RoleTag role={p.role} compact />
+              <span
+                className="text-[10px] tabular-nums text-muted-foreground"
+                title={`${p.pointCount} of ${gamePointTotal} points this game`}
+              >
+                {p.pointCount}
+              </span>
+              <Icon
+                className={cn(
+                  "h-3.5 w-3.5 shrink-0",
+                  out ? "text-red-400" : "text-muted-foreground/50",
+                )}
+              />
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function PlayView({
   game,
   players,
+  initialUnavailableIds,
   lines,
   nextPointNumber,
   gamePointTotal,
@@ -414,6 +513,8 @@ export function PlayView({
 }: {
   game: Game;
   players: Player[];
+  /** Players already sat out of this game, as saved. */
+  initialUnavailableIds: string[];
   lines: Line[];
   nextPointNumber: number;
   /** Points played so far this game — the denominator for a player's share. */
@@ -454,11 +555,16 @@ export function PlayView({
   const [turnovers, setTurnovers] = useState<Record<string, number>>({});
   const [submitting, setSubmitting] = useState(false);
   const [subbingOutId, setSubbingOutId] = useState<string | null>(null);
-  const [injuredIds, setInjuredIds] = useState<Set<string>>(new Set());
+  // Who is not playing this game. Seeded from what was saved, so a reload or a
+  // locked phone mid-game does not put the whole squad back on the list.
+  const [unavailableIds, setUnavailableIds] = useState<Set<string>>(
+    () => new Set(initialUnavailableIds),
+  );
   const [playerLineOverrides, setPlayerLineOverrides] = useState<
     Record<string, string[]>
   >({});
   const [manageOpen, setManageOpen] = useState(false);
+  const [manageTab, setManageTab] = useState<ManageTab>("availability");
   // Mode, wind and the aggression ladder live behind one collapsed strip: all
   // three are set once and rarely touched, but their current values still have
   // to be readable without opening anything.
@@ -570,27 +676,38 @@ export function PlayView({
     setBlocks((prev) => ({ ...prev, [id]: shownBlocks(id) + 1 }));
   }
 
-  function toggleInjury(id: string) {
-    const becomingInjured = !injuredIds.has(id);
-    setInjuredIds((prev) => {
+  /** Drop a player out of everything the current point still holds on them. */
+  function detachFromPoint(id: string) {
+    setSelectedIds((prev) => {
+      if (!prev.has(id)) return prev;
+      const next = new Set(prev);
+      next.delete(id);
+      return next;
+    });
+    if (assistId === id) setAssistId(null);
+    if (goalId === id) setGoalId(null);
+    if (hockeyAssistId === id) setHockeyAssistId(null);
+    clearBlocks(id);
+    clearTurnovers(id);
+  }
+
+  // The list updates on the tap and the write goes out behind it — sitting a
+  // player is a call made between points, and it should never wait on a network.
+  function toggleAvailability(id: string) {
+    const sittingOut = !unavailableIds.has(id);
+    setUnavailableIds((prev) => {
       const next = new Set(prev);
       if (next.has(id)) next.delete(id);
       else next.add(id);
       return next;
     });
-    if (becomingInjured) {
-      setSelectedIds((prev) => {
-        if (!prev.has(id)) return prev;
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
-      if (assistId === id) setAssistId(null);
-      if (goalId === id) setGoalId(null);
-      if (hockeyAssistId === id) setHockeyAssistId(null);
-      clearBlocks(id);
-      clearTurnovers(id);
-    }
+    if (sittingOut) detachFromPoint(id);
+    void setGameAbsence(game.id, game.tournamentId, id, sittingOut);
+  }
+
+  function bringEveryoneIn() {
+    setUnavailableIds(new Set());
+    void clearGameAbsences(game.id, game.tournamentId);
   }
 
   function togglePlayerLine(playerId: string, lineId: string) {
@@ -604,11 +721,11 @@ export function PlayView({
     });
   }
 
-  // Filter + sort players by fewest points (injured players excluded). Kept in
+  // Filter + sort players by fewest points (players sat out excluded). Kept in
   // fewest-points order because that order is the tie-break the suggester
   // inherits, and it is what makes FAIR mode reproduce the original picker.
   const visiblePlayers = players
-    .filter((p) => !injuredIds.has(p.id))
+    .filter((p) => !unavailableIds.has(p.id))
     .filter((p) => !selectedLine || effectiveLineIds(p).includes(selectedLine))
     .sort((a, b) => a.pointCount - b.pointCount);
 
@@ -632,9 +749,9 @@ export function PlayView({
     streak: consecutiveCounts[p.id] ?? 0,
   }));
 
-  // Derived every render rather than memoised: it depends on injuries, line
+  // Derived every render rather than memoised: it depends on availability, line
   // overrides, mode, rung and wind, and a stale memo here used to recommend
-  // injured players.
+  // players who were already sat.
   const suggestion = suggestLine({
     candidates,
     mode,
@@ -773,9 +890,15 @@ export function PlayView({
     startTransition(() => router.refresh());
   }
 
+  // Both halves of the roster sheet, kept in roster order rather than points
+  // order: the sheet is where you go to find a specific name, and a list that
+  // reshuffles itself as the game goes on is the hardest kind to scan.
+  const availableRoster = players.filter((p) => !unavailableIds.has(p.id));
+  const sittingOut = players.filter((p) => unavailableIds.has(p.id));
+
   const selectedPlayers = players.filter((p) => selectedIds.has(p.id));
   const benchPlayers = players
-    .filter((p) => !selectedIds.has(p.id) && !injuredIds.has(p.id))
+    .filter((p) => !selectedIds.has(p.id) && !unavailableIds.has(p.id))
     .sort((a, b) => a.pointCount - b.pointCount);
 
   const windLabel =
@@ -812,10 +935,11 @@ export function PlayView({
                 </button>
                 <button
                   onClick={() => setManageOpen(true)}
-                  className="text-muted-foreground p-1"
-                  title="Manage roster"
+                  className="relative text-muted-foreground p-1"
+                  title="Roster"
                 >
                   <Users className="h-4 w-4" />
+                  {sittingOut.length > 0 && <OutBadge count={sittingOut.length} />}
                 </button>
               </div>
               <div className="text-center">
@@ -1260,10 +1384,13 @@ export function PlayView({
                 <div className="flex items-center gap-0.5 shrink-0">
                   <button
                     onClick={() => setManageOpen(true)}
-                    className="text-muted-foreground p-1.5"
-                    title="Manage roster"
+                    className="relative text-muted-foreground p-1.5"
+                    title="Roster"
                   >
                     <Users className="h-4 w-4" />
+                    {sittingOut.length > 0 && (
+                      <OutBadge count={sittingOut.length} />
+                    )}
                   </button>
                   <button
                     onClick={handleUndo}
@@ -1648,7 +1775,7 @@ export function PlayView({
                       setSelectedIds(
                         new Set(
                           [...lastLineupIds].filter(
-                            (id) => !injuredIds.has(id),
+                            (id) => !unavailableIds.has(id),
                           ),
                         ),
                       )
@@ -1686,36 +1813,115 @@ export function PlayView({
         </div>
       )}
 
-      {/* Roster management sheet — line reassignment and injury marking */}
+      {/* Roster sheet — who is playing this game, and which lines they sit in */}
       <Sheet open={manageOpen} onOpenChange={setManageOpen}>
         <SheetContent
           side="bottom"
-          className="max-h-[80vh] flex flex-col overflow-hidden"
+          className="max-h-[85vh] flex flex-col overflow-hidden"
         >
           <SheetHeader className="shrink-0">
-            <SheetTitle>Manage Roster</SheetTitle>
+            <SheetTitle>Roster</SheetTitle>
             <SheetDescription>
-              Reassign lines or mark injuries for this game.
+              {manageTab === "availability"
+                ? "Tap a name to sit them out or bring them back. Saved to this game."
+                : "Reassign lines for this game."}
             </SheetDescription>
           </SheetHeader>
-          <div className="overflow-y-auto flex-1 px-4 pb-6 space-y-0">
-            {players.map((p) => {
-              const injured = injuredIds.has(p.id);
-              const currentLineIds = playerLineOverrides[p.id] ?? p.lineIds;
-              return (
-                <div
-                  key={p.id}
-                  className={cn(
-                    "flex items-start gap-3 py-3 border-b border-border last:border-0",
-                    injured && "opacity-50",
+
+          {lines.length > 0 && (
+            <div className="shrink-0 px-4 pb-2">
+              <div className="flex items-center bg-muted rounded-full p-0.5">
+                {(
+                  [
+                    ["availability", "Availability"],
+                    ["lines", "Lines"],
+                  ] as [ManageTab, string][]
+                ).map(([tab, label]: [ManageTab, string]) => (
+                  <button
+                    key={tab}
+                    onClick={() => setManageTab(tab)}
+                    className={cn(
+                      "flex-1 py-1.5 rounded-full text-xs font-bold transition-all",
+                      manageTab === tab
+                        ? "bg-background text-foreground shadow-sm"
+                        : "text-muted-foreground hover:text-foreground",
+                    )}
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {manageTab === "availability" || lines.length === 0 ? (
+            <>
+              {/* The count is the thing being managed, so it stays pinned above
+                  the scroll along with the one bulk move worth a button. */}
+              <div className="shrink-0 flex items-center gap-2 px-4 pb-2">
+                <p className="flex-1 text-xs font-semibold tabular-nums">
+                  {availableRoster.length} in
+                  {sittingOut.length > 0 && (
+                    <span className="text-muted-foreground font-medium">
+                      {" · "}
+                      {sittingOut.length} out
+                    </span>
                   )}
-                >
-                  <div className="flex-1 min-w-0">
+                </p>
+                {sittingOut.length > 0 && (
+                  <button
+                    onClick={bringEveryoneIn}
+                    className="shrink-0 px-2.5 py-1 rounded-full border border-input text-[11px] font-semibold hover:bg-accent transition-colors"
+                  >
+                    All in
+                  </button>
+                )}
+              </div>
+
+              {availableRoster.length < 7 && (
+                <div className="shrink-0 mx-4 mb-2 flex items-center gap-1.5 rounded-lg border border-amber-300 bg-amber-50 px-2.5 py-1.5 text-[11px] font-medium text-amber-700">
+                  <AlertTriangle className="h-3.5 w-3.5 shrink-0" />
+                  Only {availableRoster.length} available — a line needs 7.
+                </div>
+              )}
+
+              <div className="overflow-y-auto flex-1 px-4 pb-6 space-y-4">
+                <AvailabilitySection
+                  title="Playing"
+                  players={availableRoster}
+                  out={false}
+                  gamePointTotal={gamePointTotal}
+                  onToggle={toggleAvailability}
+                  emptyLabel="Nobody is available — tap a name below."
+                />
+                <AvailabilitySection
+                  title="Sitting out"
+                  players={sittingOut}
+                  out
+                  gamePointTotal={gamePointTotal}
+                  onToggle={toggleAvailability}
+                  emptyLabel="Everyone is in."
+                />
+              </div>
+            </>
+          ) : (
+            <div className="overflow-y-auto flex-1 px-4 pb-6 space-y-0">
+              {players.map((p: Player) => {
+                const out = unavailableIds.has(p.id);
+                const currentLineIds = playerLineOverrides[p.id] ?? p.lineIds;
+                return (
+                  <div
+                    key={p.id}
+                    className={cn(
+                      "py-3 border-b border-border last:border-0",
+                      out && "opacity-50",
+                    )}
+                  >
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span
                         className={cn(
                           "text-sm font-medium",
-                          injured && "line-through",
+                          out && "line-through",
                         )}
                       >
                         {p.name}
@@ -1726,49 +1932,35 @@ export function PlayView({
                         {p.tournamentPointCount}/{tournamentPointTotal} tourn
                       </span>
                     </div>
-                    {lines.length > 0 && (
-                      <div className="flex flex-wrap gap-1 mt-1.5">
-                        {lines.map((line) => {
-                          const inLine = currentLineIds.includes(line.id);
-                          return (
-                            <button
-                              key={line.id}
-                              onClick={() => togglePlayerLine(p.id, line.id)}
-                              className={cn(
-                                "text-[10px] px-2 py-0.5 rounded-full border font-medium transition-colors flex items-center gap-0.5",
-                                inLine
-                                  ? line.type === "POWER"
-                                    ? "bg-amber-500 text-white border-amber-500"
-                                    : "bg-primary/20 text-primary border-primary/50"
-                                  : "border-input text-muted-foreground hover:bg-accent",
-                              )}
-                            >
-                              {line.type === "POWER" && (
-                                <Zap className="h-2.5 w-2.5" />
-                              )}
-                              {line.name}
-                            </button>
-                          );
-                        })}
-                      </div>
-                    )}
+                    <div className="flex flex-wrap gap-1 mt-1.5">
+                      {lines.map((line: Line) => {
+                        const inLine = currentLineIds.includes(line.id);
+                        return (
+                          <button
+                            key={line.id}
+                            onClick={() => togglePlayerLine(p.id, line.id)}
+                            className={cn(
+                              "text-[10px] px-2 py-0.5 rounded-full border font-medium transition-colors flex items-center gap-0.5",
+                              inLine
+                                ? line.type === "POWER"
+                                  ? "bg-amber-500 text-white border-amber-500"
+                                  : "bg-primary/20 text-primary border-primary/50"
+                                : "border-input text-muted-foreground hover:bg-accent",
+                            )}
+                          >
+                            {line.type === "POWER" && (
+                              <Zap className="h-2.5 w-2.5" />
+                            )}
+                            {line.name}
+                          </button>
+                        );
+                      })}
+                    </div>
                   </div>
-                  <button
-                    onClick={() => toggleInjury(p.id)}
-                    className={cn(
-                      "mt-0.5 p-2 rounded-lg border transition-colors shrink-0",
-                      injured
-                        ? "border-red-400 bg-red-50 text-red-600"
-                        : "border-input text-muted-foreground hover:bg-accent",
-                    )}
-                    title={injured ? "Mark available" : "Mark injured"}
-                  >
-                    <UserX className="h-4 w-4" />
-                  </button>
-                </div>
-              );
-            })}
-          </div>
+                );
+              })}
+            </div>
+          )}
         </SheetContent>
       </Sheet>
     </>

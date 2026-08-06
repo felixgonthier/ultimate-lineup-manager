@@ -106,6 +106,7 @@ model Player {
   team         Team           @relation(fields: [teamId], references: [id], onDelete: Cascade)
   lineAssigns  LinePlayer[]
   pointPlayers PointPlayer[]
+  gameAbsences GameAbsence[]
   assistPoints Point[]        @relation("AssistPlayer")
   goalPoints   Point[]        @relation("GoalPlayer")
   hockeyAssistPoints Point[]  @relation("HockeyAssistPlayer")
@@ -163,6 +164,21 @@ model Game {
   createdAt            DateTime        @default(now())
   tournament           Tournament      @relation(fields: [tournamentId], references: [id], onDelete: Cascade)
   points               Point[]
+  absences             GameAbsence[]
+}
+
+/// A player who is not available for this game — injured, resting, or not at the
+/// fields. Absence rather than availability so the common case (everyone in)
+/// needs no rows, and a player added to the roster mid-tournament is in by
+/// default rather than silently missing from every past game.
+model GameAbsence {
+  gameId    String
+  playerId  String
+  createdAt DateTime @default(now())
+  game      Game     @relation(fields: [gameId], references: [id], onDelete: Cascade)
+  player    Player   @relation(fields: [playerId], references: [id], onDelete: Cascade)
+
+  @@id([gameId, playerId])
 }
 
 model Point {
